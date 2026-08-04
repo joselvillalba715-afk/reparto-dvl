@@ -168,18 +168,22 @@
     <div id="tab-clientes" class="hidden">
       <div class="card">
         <h2>Importar clientes</h2>
-        <div class="sub">Pegá el listado exportado del sistema FoxPro. Formato por línea: <b>nombre,direccion,zona,camion</b> (una fila por cliente, separado por comas).</div>
+        <div class="sub">Pegá el listado exportado del sistema FoxPro. Formato por línea: <b>numero,nombre,direccion,telefono</b> (una fila por cliente, separado por comas). El camión se asigna después, al armar la ruta de cada día — acá no hace falta.</div>
         <div class="field">
-          <textarea id="csvInput" placeholder="Almacén Don Pepe,Av. Colón 1234,Centro,Camion 1
-Kiosco La Esquina,Bv. San Juan 500,Alberdi,Camion 2"></textarea>
+          <textarea id="csvInput" placeholder="1024,Almacén Don Pepe,Av. Colón 1234,3511234567
+1025,Kiosco La Esquina,Bv. San Juan 500,3517654321"></textarea>
         </div>
         <button class="btn btn-primary" onclick="importClientes()">Importar listado</button>
       </div>
       <div class="card">
         <h2>Clientes cargados</h2>
         <div class="sub" id="clientesCount"></div>
+        <div class="field">
+          <label>Buscar</label>
+          <input type="text" id="clientesSearch" placeholder="Nombre, número o dirección..." oninput="renderClientesTab()">
+        </div>
         <table>
-          <thead><tr><th>Cliente</th><th>Zona</th><th>Camión</th><th></th></tr></thead>
+          <thead><tr><th>N°</th><th>Cliente</th><th>Teléfono</th><th></th></tr></thead>
           <tbody id="clientesTable"></tbody>
         </table>
       </div>
@@ -188,13 +192,22 @@ Kiosco La Esquina,Bv. San Juan 500,Alberdi,Camion 2"></textarea>
     <!-- ARMAR RUTAS -->
     <div id="tab-rutas" class="hidden">
       <div class="card">
-        <h2>Reparto del día</h2>
-        <div class="sub">Elegí la fecha y activá los clientes que salen a reparto hoy. Ya vienen agrupados por camión según la zona asignada.</div>
+        <h2>Buscar clientes para agregar al reparto</h2>
+        <div class="sub">Escribí nombre, número o dirección para encontrarlo entre todos tus clientes, y asignale un camión y un N° de viaje para hoy.</div>
         <div class="field" style="max-width:220px;">
           <label>Fecha</label>
           <input type="date" id="rutaFecha" onchange="renderRutas()">
         </div>
-        <div id="rutasByCamion"></div>
+        <div class="field">
+          <label>Buscar cliente</label>
+          <input type="text" id="rutaSearch" placeholder="Nombre, número o dirección..." oninput="renderBusquedaRutas()">
+        </div>
+        <div id="rutaSearchResults"></div>
+      </div>
+      <div class="card">
+        <h2>Reparto de hoy</h2>
+        <div class="sub" id="rutaSeleccionCount"></div>
+        <div id="rutaSeleccionados"></div>
         <button class="btn btn-primary" style="margin-top:10px;" onclick="guardarRutaDelDia()">Confirmar reparto del día</button>
       </div>
     </div>
@@ -210,7 +223,7 @@ Kiosco La Esquina,Bv. San Juan 500,Alberdi,Camion 2"></textarea>
         <h2>Cuenta corriente de envases por cliente</h2>
         <div class="sub">Saldo acumulado de cajones retornables que cada cliente tiene pendiente de devolver, por producto.</div>
         <table>
-          <thead><tr><th>Cliente</th><th>Zona</th><th>Saldo pendiente</th></tr></thead>
+          <thead><tr><th>N°</th><th>Cliente</th><th>Saldo pendiente</th></tr></thead>
           <tbody id="envasesTable"></tbody>
         </table>
       </div>
@@ -243,6 +256,11 @@ Kiosco La Esquina,Bv. San Juan 500,Alberdi,Camion 2"></textarea>
       <h3 id="sheetClientName">—</h3>
       <div class="addr" id="sheetClientAddr">—</div>
       <div id="anticipoBanner" class="hidden" style="background:var(--green-bg); color:var(--green); border-radius:10px; padding:10px 12px; font-size:13px; margin-bottom:14px; font-weight:600;"></div>
+
+      <div class="field">
+        <label>Monto de la boleta ($)</label>
+        <input type="number" id="montoBoleta" placeholder="0">
+      </div>
 
       <label>Forma de pago</label>
       <div class="pill-group" id="pagoPills">
@@ -353,17 +371,25 @@ window.__fb = {
 // Tipos de cajón retornable que se controlan por separado. Sumá o cambiá nombres acá si hace falta.
 const TIPOS_ENVASE = ['Coca-Cola', 'Cerveza'];
 
-let CLIENTES = [];          // {id, nombre, direccion, zona, camion}
-let CAMIONES = [];          // lista de camiones detectados
+let CLIENTES = [];          // {id, numero, nombre, direccion, telefono}
+let CAMIONES = [];          // lista de camiones, tomada de los choferes dados de alta
 let RUTA_HOY = [];          // ids de clientes activos hoy (por camión al armar)
 let ENTREGAS_HOY = {};      // clienteId -> entrega doc
 let currentRole = null;     // 'admin' | 'driver'
 let currentCamion = null;
 let currentViaje = 1;
 let activeClienteId = null;
+let activeEntregaId = null;
+let editandoDesdeAdmin = false;
 let selectedPago = null;
 
-function todayStr(){ return new Date().toISOString().slice(0,10); }
+function todayStr(){
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+  return `${yyyy}-${mm}-${dd}`;
+}
 function fmtDate(d){
   return new Date(d+'T00:00:00').toLocaleDateString('es-AR', {weekday:'long', day:'numeric', month:'long'});
 }
@@ -406,6 +432,7 @@ async function routeAfterLogin(user){
     document.getElementById('adminView').classList.remove('hidden');
     document.getElementById('rutaFecha').value = todayStr();
     await loadClientes();
+    await loadCamiones();
     renderClientesTab();
     renderRutas();
     renderDashboard();
@@ -483,7 +510,12 @@ async function loadClientes(){
   const { db, collection, getDocs } = window.__fb;
   const snap = await getDocs(collection(db, 'clientes_reparto'));
   CLIENTES = snap.docs.map(d=>({id:d.id, ...d.data()}));
-  CAMIONES = [...new Set(CLIENTES.map(c=>c.camion).filter(Boolean))].sort();
+}
+
+async function loadCamiones(){
+  const { db, collection, getDocs } = window.__fb;
+  const snap = await getDocs(collection(db, 'usuarios'));
+  CAMIONES = [...new Set(snap.docs.map(d=>d.data().camion).filter(Boolean))].sort();
 }
 
 async function importClientes(){
@@ -495,8 +527,8 @@ async function importClientes(){
   for(const line of lines){
     const parts = line.split(',').map(p=>p.trim());
     if(parts.length < 4) continue;
-    const [nombre, direccion, zona, camion] = parts;
-    await addDoc(collection(db, 'clientes_reparto'), { nombre, direccion, zona, camion, activo:true, envaseSaldo:{} });
+    const [numero, nombre, direccion, telefono] = parts;
+    await addDoc(collection(db, 'clientes_reparto'), { numero, nombre, direccion, telefono, activo:true, envaseSaldo:{} });
     count++;
   }
   toast(`${count} clientes importados`);
@@ -506,15 +538,26 @@ async function importClientes(){
 }
 
 function renderClientesTab(){
-  document.getElementById('clientesCount').textContent = `${CLIENTES.length} clientes cargados en ${CAMIONES.length} camiones/zonas`;
-  document.getElementById('clientesTable').innerHTML = CLIENTES.map(c=>`
+  const q = (document.getElementById('clientesSearch')?.value || '').trim().toLowerCase();
+  document.getElementById('clientesCount').textContent = `${CLIENTES.length} clientes cargados en total`;
+  const filtrados = q
+    ? CLIENTES.filter(c =>
+        (c.nombre||'').toLowerCase().includes(q) ||
+        (c.numero||'').toLowerCase().includes(q) ||
+        (c.direccion||'').toLowerCase().includes(q))
+    : CLIENTES;
+  const mostrar = filtrados.slice(0, 60);
+  document.getElementById('clientesTable').innerHTML = mostrar.map(c=>`
     <tr>
+      <td>${c.numero||'—'}</td>
       <td><b>${c.nombre}</b><br><span style="color:var(--ink-soft); font-size:12px;">${c.direccion||''}</span></td>
-      <td>${c.zona||'—'}</td>
-      <td>${c.camion||'—'}</td>
+      <td>${c.telefono||'—'}</td>
       <td><button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="eliminarCliente('${c.id}')">Quitar</button></td>
     </tr>
-  `).join('') || `<tr><td colspan="4" style="color:var(--ink-soft);">Todavía no hay clientes cargados.</td></tr>`;
+  `).join('') || `<tr><td colspan="4" style="color:var(--ink-soft);">${q ? 'Sin resultados para "'+q+'".' : 'Todavía no hay clientes cargados.'}</td></tr>`;
+  if(filtrados.length > 60){
+    document.getElementById('clientesTable').innerHTML += `<tr><td colspan="4" style="color:var(--ink-soft); font-size:12.5px;">Mostrando 60 de ${filtrados.length} resultados — afiná la búsqueda para ver otros.</td></tr>`;
+  }
 }
 
 async function eliminarCliente(id){
@@ -525,67 +568,92 @@ async function eliminarCliente(id){
 }
 
 /* =======================================================================
-   ARMAR RUTA DEL DÍA
+   ARMAR RUTA DEL DÍA — búsqueda + asignación de camión y viaje en el momento
    ======================================================================= */
 let rutaSeleccion = new Set();
-let viajePorCamion = {}; // { 'Camion 1': 1, 'Camion 2': 1, ... }
+let selectedCamion = {}; // { clienteId: 'Camion 2' } — camión elegido para hoy
+let selectedViaje = {};  // { clienteId: 1 } — n° de viaje/reparto de hoy
 
 function renderRutas(){
-  const fecha = document.getElementById('rutaFecha').value || todayStr();
-  const byCamion = {};
-  CLIENTES.forEach(c=>{
-    const cam = c.camion || 'Sin camión';
-    (byCamion[cam] = byCamion[cam]||[]).push(c);
-  });
-  const html = Object.keys(byCamion).sort().map(cam=>{
-    if(!viajePorCamion[cam]) viajePorCamion[cam] = 1;
-    return `
-    <div class="card">
-      <h2>${cam}</h2>
-      <div class="sub">${byCamion[cam].length} clientes en esta zona/camión</div>
-      <div class="field" style="max-width:220px;">
-        <label>N° de viaje/reparto de hoy</label>
-        <input type="number" min="1" value="${viajePorCamion[cam]}" class="viajeInput" data-camion="${cam}" style="width:100%;">
-        <div class="sub" style="margin:4px 0 0;">Si este camión ya salió antes hoy, subí este número (2, 3...) antes de armar el próximo viaje.</div>
-      </div>
-      <div style="display:flex; flex-direction:column; gap:8px;">
-        ${byCamion[cam].map(c=>`
-          <label style="display:flex; align-items:center; gap:10px; font-size:14px; font-weight:400; color:var(--ink);">
-            <input type="checkbox" value="${c.id}" class="rutaCheck" ${rutaSeleccion.has(c.id)?'checked':''} style="width:18px; height:18px;">
-            ${c.nombre} <span style="color:var(--ink-soft); font-size:12.5px;">— ${c.zona||''}</span>
-          </label>
-        `).join('')}
-      </div>
-    </div>
-  `;
-  }).join('');
-  document.getElementById('rutasByCamion').innerHTML = html || `<div class="sub">Cargá clientes en la pestaña "Clientes" primero.</div>`;
-  document.querySelectorAll('.rutaCheck').forEach(chk=>{
+  renderBusquedaRutas();
+  renderSeleccionados();
+}
+
+function renderBusquedaRutas(){
+  const resultsEl = document.getElementById('rutaSearchResults');
+  if(!resultsEl) return;
+  const q = (document.getElementById('rutaSearch')?.value || '').trim().toLowerCase();
+  if(q.length < 2){
+    resultsEl.innerHTML = `<div class="sub">Escribí al menos 2 letras para buscar entre tus ${CLIENTES.length} clientes.</div>`;
+    return;
+  }
+  const matches = CLIENTES.filter(c =>
+    (c.nombre||'').toLowerCase().includes(q) ||
+    (c.numero||'').toLowerCase().includes(q) ||
+    (c.direccion||'').toLowerCase().includes(q)
+  ).slice(0, 40);
+  resultsEl.innerHTML = matches.map(c=>`
+    <label style="display:flex; align-items:center; gap:10px; font-size:14px; font-weight:400; padding:8px 0; border-bottom:1px solid #ece9df;">
+      <input type="checkbox" value="${c.id}" class="rutaCheck" ${rutaSeleccion.has(c.id)?'checked':''} style="width:18px; height:18px;">
+      <span><b>${c.nombre}</b> ${c.numero?`<span style="color:var(--ink-soft); font-size:12px;">#${c.numero}</span>`:''}<br><span style="color:var(--ink-soft); font-size:12.5px;">${c.direccion||''}</span></span>
+    </label>
+  `).join('') || `<div class="sub">No encontré clientes con "${q}".</div>`;
+  document.querySelectorAll('#rutaSearchResults .rutaCheck').forEach(chk=>{
     chk.addEventListener('change', ()=>{
       chk.checked ? rutaSeleccion.add(chk.value) : rutaSeleccion.delete(chk.value);
-    });
-  });
-  document.querySelectorAll('.viajeInput').forEach(inp=>{
-    inp.addEventListener('change', ()=>{
-      viajePorCamion[inp.dataset.camion] = parseInt(inp.value) || 1;
+      renderSeleccionados();
     });
   });
 }
 
+function renderSeleccionados(){
+  const el = document.getElementById('rutaSeleccionados');
+  if(!el) return;
+  const seleccionados = CLIENTES.filter(c => rutaSeleccion.has(c.id));
+  document.getElementById('rutaSeleccionCount').textContent = `${seleccionados.length} clientes en el reparto de hoy`;
+  const opcionesCamion = CAMIONES.length ? CAMIONES : ['(no hay choferes dados de alta todavía)'];
+  el.innerHTML = seleccionados.map(c=>{
+    if(!selectedCamion[c.id]) selectedCamion[c.id] = opcionesCamion[0];
+    if(!selectedViaje[c.id]) selectedViaje[c.id] = 1;
+    return `
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:9px 0; border-bottom:1px solid #ece9df;">
+      <div style="flex:1; min-width:160px; font-size:14px;"><b>${c.nombre}</b><br><span style="color:var(--ink-soft); font-size:12px;">${c.direccion||''}</span></div>
+      <select class="camionSelectRow" data-cliente="${c.id}" style="width:auto; font-size:12.5px; padding:6px 8px;">
+        ${opcionesCamion.map(op=>`<option value="${op}" ${selectedCamion[c.id]===op?'selected':''}>${op}</option>`).join('')}
+      </select>
+      <input type="number" min="1" class="viajeInputRow" data-cliente="${c.id}" value="${selectedViaje[c.id]}" title="N° de viaje" style="width:56px; font-size:12.5px; padding:6px 8px;">
+      <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="quitarDeRuta('${c.id}')">Quitar</button>
+    </div>`;
+  }).join('') || `<div class="sub">Todavía no agregaste clientes. Buscalos arriba.</div>`;
+
+  document.querySelectorAll('.camionSelectRow').forEach(sel=>{
+    sel.addEventListener('change', ()=>{ selectedCamion[sel.dataset.cliente] = sel.value; });
+  });
+  document.querySelectorAll('.viajeInputRow').forEach(inp=>{
+    inp.addEventListener('change', ()=>{ selectedViaje[inp.dataset.cliente] = parseInt(inp.value) || 1; });
+  });
+}
+
+function quitarDeRuta(clienteId){
+  rutaSeleccion.delete(clienteId);
+  renderRutas();
+}
+
 async function guardarRutaDelDia(){
   const fecha = document.getElementById('rutaFecha').value || todayStr();
-  if(rutaSeleccion.size === 0){ toast('Marcá al menos un cliente'); return; }
-  const { db, doc, setDoc, collection } = window.__fb;
+  if(rutaSeleccion.size === 0){ toast('Agregá al menos un cliente'); return; }
+  if(!CAMIONES.length){ toast('Primero dá de alta al menos un chofer con su camión asignado'); return; }
+  const { db, doc, setDoc } = window.__fb;
   const batchWrites = [];
   for(const clienteId of rutaSeleccion){
     const cliente = CLIENTES.find(c=>c.id===clienteId);
     if(!cliente) continue;
-    const camion = cliente.camion || 'Sin camión';
-    const viaje = viajePorCamion[camion] || 1;
+    const camion = selectedCamion[clienteId] || CAMIONES[0];
+    const viaje = selectedViaje[clienteId] || 1;
     const entregaId = `${fecha}_${clienteId}_v${viaje}`;
     batchWrites.push(setDoc(doc(db,'entregas',entregaId), {
       fecha, viaje, clienteId, nombre:cliente.nombre, direccion:cliente.direccion||'',
-      camion, zona:cliente.zona||'',
+      numero:cliente.numero||'', telefono:cliente.telefono||'', camion,
       estado:'pendiente', formaPago:null, montos:{}, envases:{},
       observaciones:'', horaEntrega:null
     }, {merge:true}));
@@ -594,6 +662,7 @@ async function guardarRutaDelDia(){
   toast(`Reparto del ${fecha} confirmado: ${rutaSeleccion.size} clientes`);
   rutaSeleccion.clear();
   renderDashboard();
+  renderRutas();
 }
 
 /* =======================================================================
@@ -624,15 +693,17 @@ async function renderDashboard(){
       <div class="card">
         <h2>${grupo}</h2>
         <table>
-          <thead><tr><th>Cliente</th><th>Estado</th><th>Pago</th><th>Envases</th><th>Transferencia</th></tr></thead>
+          <thead><tr><th>Cliente</th><th>Estado</th><th>Boleta</th><th>Pago</th><th>Envases</th><th>Transferencia</th><th></th></tr></thead>
           <tbody>
             ${byGrupo[grupo].map(e=>`
               <tr>
                 <td>${e.nombre}</td>
                 <td><span class="badge ${e.estado==='entregado'?'entregado':'pendiente'}">${e.estado==='entregado'?'Entregado':'Pendiente'}</span></td>
+                <td>${e.montoBoleta ? '$'+e.montoBoleta : '—'}</td>
                 <td>${pagoLabel(e)}</td>
                 <td>${envLabel(e)}</td>
                 <td>${anticipoCell(e)}</td>
+                <td>${e.estado==='entregado' ? `<button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="openSheetAdmin('${e.id}')">Corregir</button>` : ''}</td>
               </tr>
             `).join('')}
           </tbody>
@@ -724,8 +795,8 @@ async function renderEnvases(){
         .join(' ');
       return `
         <tr>
+          <td>${c.numero||'—'}</td>
           <td>${c.nombre}</td>
-          <td>${c.zona||'—'}</td>
           <td>${badges || `<span class="badge ok">Al día</span>`}</td>
         </tr>`;
     }).join('') || `<tr><td colspan="3" style="color:var(--ink-soft);">Sin datos todavía.</td></tr>`;
@@ -826,15 +897,31 @@ function loadDriverRoute(){
 /* ---------- Modal de entrega ---------- */
 function openSheet(clienteId){
   activeClienteId = clienteId;
-  selectedPago = null;
+  editandoDesdeAdmin = false;
   const e = ENTREGAS_HOY[clienteId];
+  activeEntregaId = e.id;
+  llenarSheet(e);
+}
+
+function openSheetAdmin(entregaId){
+  const e = window.__ENTREGAS_HOY_ADMIN[entregaId];
+  if(!e) return;
+  activeClienteId = e.clienteId;
+  activeEntregaId = entregaId;
+  editandoDesdeAdmin = true;
+  llenarSheet(e);
+}
+
+function llenarSheet(e){
+  selectedPago = null;
   document.getElementById('sheetClientName').textContent = e.nombre;
   document.getElementById('sheetClientAddr').textContent = e.direccion || '';
+  document.getElementById('montoBoleta').value = e.montoBoleta || '';
   document.querySelectorAll('#pagoPills .pill').forEach(p=>p.classList.remove('selected'));
   document.getElementById('mixtoFields').classList.add('hidden');
-  document.getElementById('montoEfectivo').value = '';
-  document.getElementById('montoTransferencia').value = '';
-  document.getElementById('montoQR').value = '';
+  document.getElementById('montoEfectivo').value = e.montos?.efectivo || '';
+  document.getElementById('montoTransferencia').value = e.montos?.transferencia || '';
+  document.getElementById('montoQR').value = e.montos?.qr || '';
   document.getElementById('envaseInputs').innerHTML = TIPOS_ENVASE.map((tipo, i)=>`
     <div class="row" style="align-items:flex-end; margin-bottom:8px;">
       <div style="flex:1.3;"><label style="margin-bottom:2px; font-weight:700; color:var(--ink);">${tipo}</label></div>
@@ -854,21 +941,26 @@ function openSheet(clienteId){
     const tipoTxt = e.anticipo.tipo === 'total' ? 'Ya transfirió el total' : 'Ya transfirió una parte';
     banner.innerHTML = `${tipoTxt}: $${e.anticipo.monto}${e.anticipo.nota ? ' — '+e.anticipo.nota : ''}`;
     banner.classList.remove('hidden');
-    if(e.anticipo.tipo === 'total'){
-      selectPago('transferencia');
-    } else {
-      selectPago('mixto');
-      document.getElementById('montoTransferencia').value = e.anticipo.monto;
-    }
   } else {
     banner.classList.add('hidden');
   }
 
+  // Si ya tiene forma de pago cargada (se está corrigiendo), la precarga
+  if(e.formaPago){
+    selectPago(e.formaPago);
+  } else if(e.anticipo){
+    if(e.anticipo.tipo === 'total'){ selectPago('transferencia'); }
+    else { selectPago('mixto'); document.getElementById('montoTransferencia').value = e.anticipo.monto; }
+  }
+
   document.getElementById('deliveryOverlay').classList.remove('hidden');
 }
+
 function closeSheet(){
   document.getElementById('deliveryOverlay').classList.add('hidden');
   activeClienteId = null;
+  activeEntregaId = null;
+  editandoDesdeAdmin = false;
 }
 function selectPago(tipo){
   selectedPago = tipo;
@@ -877,7 +969,6 @@ function selectPago(tipo){
 }
 async function confirmarEntrega(){
   if(!selectedPago){ toast('Elegí una forma de pago'); return; }
-  const fecha = todayStr();
   const envases = {};
   TIPOS_ENVASE.forEach((tipo, i)=>{
     const salieron = parseInt(document.getElementById(`env_sal_${i}`).value)||0;
@@ -889,41 +980,49 @@ async function confirmarEntrega(){
     transferencia: parseFloat(document.getElementById('montoTransferencia').value)||0,
     qr: parseFloat(document.getElementById('montoQR').value)||0
   } : {};
+  const montoBoleta = parseFloat(document.getElementById('montoBoleta').value) || 0;
   const observaciones = document.getElementById('obsInput').value.trim();
 
-  const { db, doc, updateDoc, runTransaction } = window.__fb;
-  const entregaId = `${fecha}_${activeClienteId}`;
-  await updateDoc(doc(db,'entregas',entregaId), {
-    estado:'entregado', formaPago:selectedPago, montos, envases,
+  const { db, doc, updateDoc, getDoc, runTransaction } = window.__fb;
+  const entregaRef = doc(db,'entregas',activeEntregaId);
+
+  // Si se está corrigiendo una entrega ya confirmada, primero deshacemos el movimiento
+  // de envases que había quedado cargado, para no duplicar el saldo del cliente.
+  const prevSnap = await getDoc(entregaRef);
+  const envasesPrevios = prevSnap.exists() ? (prevSnap.data().envases || {}) : {};
+
+  await updateDoc(entregaRef, {
+    estado:'entregado', formaPago:selectedPago, montos, envases, montoBoleta,
     observaciones, horaEntrega: new Date().toISOString()
   });
 
-  // Actualiza saldo de envases del cliente (cuenta corriente), un saldo por tipo de producto
-  const tiposConMovimiento = Object.keys(envases).filter(t => (envases[t].salieron - envases[t].volvieron) !== 0);
-  if(tiposConMovimiento.length){
+  // Recalcula el saldo de envases del cliente: resta el movimiento viejo, suma el nuevo
+  const tiposAfectados = new Set([...Object.keys(envasesPrevios), ...Object.keys(envases)]);
+  if(tiposAfectados.size){
     const clienteRef = doc(db,'clientes_reparto', activeClienteId);
     await runTransaction(db, async (tx)=>{
       const snap = await tx.get(clienteRef);
       const saldoActual = snap.exists() ? (snap.data().envaseSaldo||{}) : {};
       const nuevoSaldo = {...saldoActual};
-      tiposConMovimiento.forEach(tipo=>{
-        const diff = envases[tipo].salieron - envases[tipo].volvieron;
-        nuevoSaldo[tipo] = (nuevoSaldo[tipo]||0) + diff;
+      tiposAfectados.forEach(tipo=>{
+        const diffPrevio = (envasesPrevios[tipo]?.salieron||0) - (envasesPrevios[tipo]?.volvieron||0);
+        const diffNuevo = (envases[tipo]?.salieron||0) - (envases[tipo]?.volvieron||0);
+        nuevoSaldo[tipo] = (nuevoSaldo[tipo]||0) - diffPrevio + diffNuevo;
       });
       tx.update(clienteRef, { envaseSaldo: nuevoSaldo });
     });
   }
-  toast('Entrega registrada');
+  toast('Entrega guardada');
   closeSheet();
 }
 
 // exponer funciones usadas en HTML inline
 Object.assign(window, {
   doLogin, logout, switchTab, elegirViaje,
-  importClientes, eliminarCliente, renderRutas, guardarRutaDelDia,
-  openSheet, closeSheet, selectPago, confirmarEntrega,
+  importClientes, eliminarCliente, renderRutas, renderBusquedaRutas, quitarDeRuta, guardarRutaDelDia,
+  openSheet, openSheetAdmin, closeSheet, selectPago, confirmarEntrega,
   openAnticipoSheet, closeAnticipoSheet, selectAnticipoTipo, guardarAnticipo,
-  guardarCargaInicial
+  guardarCargaInicial, renderClientesTab
 });
 </script>
 </body>
