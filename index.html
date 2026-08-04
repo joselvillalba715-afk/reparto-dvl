@@ -213,9 +213,8 @@
       </div>
       <div class="card">
         <h2>Reparto de hoy</h2>
-        <div class="sub">Por cada cliente: camión, N° de viaje, monto de la boleta, y cajones del pedido (Coca-Cola / Cerveza).</div>
+        <div class="sub">Por cada cliente: camión, N° de viaje, y monto de la boleta. Los envases (préstamos, devoluciones y ventas de botellas) los carga el chofer cuando llega a cada cliente.</div>
         <div class="sub" id="rutaSeleccionCount"></div>
-        <div class="sub" id="rutaResumenCajones" style="font-weight:600; color:var(--ink);"></div>
         <div id="rutaSeleccionados"></div>
         <button class="btn btn-primary" style="margin-top:10px;" onclick="guardarRutaDelDia()">Confirmar reparto del día</button>
       </div>
@@ -738,7 +737,6 @@ let rutaSeleccion = new Set();
 let selectedCamion = {}; // { clienteId: 'Camion 2' } — camión elegido para hoy
 let selectedViaje = {};  // { clienteId: 1 } — n° de viaje/reparto de hoy
 let selectedMontoBoleta = {}; // { clienteId: 15000 } — monto de la boleta cargado al armar la ruta
-let selectedEnvasesPedido = {}; // { clienteId: { 'Coca-Cola': 4, 'Cerveza': 2 } } — cajones del pedido de cada cliente
 
 function renderRutas(){
   renderBusquedaRutas();
@@ -781,7 +779,6 @@ function renderSeleccionados(){
   el.innerHTML = seleccionados.map(c=>{
     if(!selectedCamion[c.id]) selectedCamion[c.id] = opcionesCamion[0];
     if(!selectedViaje[c.id]) selectedViaje[c.id] = 1;
-    if(!selectedEnvasesPedido[c.id]) selectedEnvasesPedido[c.id] = {};
     return `
     <div style="display:flex; align-items:flex-end; gap:8px; flex-wrap:wrap; padding:9px 0; border-bottom:1px solid #ece9df;">
       <div style="flex:1; min-width:160px; font-size:14px; padding-bottom:6px;"><b>${c.nombre}</b><br><span style="color:var(--ink-soft); font-size:12px;">${c.direccion||''}</span></div>
@@ -796,11 +793,6 @@ function renderSeleccionados(){
       <label class="field-mini"><span>$ Boleta</span>
         <input type="number" min="0" class="boletaInputRow" data-cliente="${c.id}" value="${selectedMontoBoleta[c.id] || ''}" placeholder="0" style="width:90px; font-size:12.5px; padding:6px 8px;">
       </label>
-      ${TIPOS_ENVASE.map(tipo=>`
-        <label class="field-mini"><span>${tipo}</span>
-          <input type="number" min="0" step="0.5" class="envasePedidoInputRow" data-cliente="${c.id}" data-tipo="${tipo}" value="${selectedEnvasesPedido[c.id][tipo] || ''}" placeholder="0" style="width:60px; font-size:12.5px; padding:6px 8px;">
-        </label>
-      `).join('')}
       <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="quitarDeRuta('${c.id}')">Quitar</button>
     </div>`;
   }).join('') || `<div class="sub">Todavía no agregaste clientes. Buscalos arriba.</div>`;
@@ -814,32 +806,6 @@ function renderSeleccionados(){
   document.querySelectorAll('.boletaInputRow').forEach(inp=>{
     inp.addEventListener('change', ()=>{ selectedMontoBoleta[inp.dataset.cliente] = parseFloat(inp.value) || 0; });
   });
-  document.querySelectorAll('.envasePedidoInputRow').forEach(inp=>{
-    inp.addEventListener('change', ()=>{
-      const cid = inp.dataset.cliente, tipo = inp.dataset.tipo;
-      if(!selectedEnvasesPedido[cid]) selectedEnvasesPedido[cid] = {};
-      selectedEnvasesPedido[cid][tipo] = parseFloat(inp.value) || 0;
-      renderResumenCajonesRuta();
-    });
-  });
-  renderResumenCajonesRuta();
-}
-
-function renderResumenCajonesRuta(){
-  const el = document.getElementById('rutaResumenCajones');
-  if(!el) return;
-  const totales = {};
-  TIPOS_ENVASE.forEach(t => totales[t] = 0);
-  rutaSeleccion.forEach(cid => {
-    const pedido = selectedEnvasesPedido[cid] || {};
-    TIPOS_ENVASE.forEach(t => totales[t] += (pedido[t] || 0));
-  });
-  const totalGeneral = Object.values(totales).reduce((a,b)=>a+b,0);
-  if(!totalGeneral){
-    el.textContent = '';
-    return;
-  }
-  el.textContent = 'Cajones en este reparto: ' + TIPOS_ENVASE.map(t => `${t}: ${totales[t]}`).join(' · ');
 }
 
 function quitarDeRuta(clienteId){
@@ -859,16 +825,11 @@ async function guardarRutaDelDia(){
     const camion = selectedCamion[clienteId] || CAMIONES[0];
     const viaje = selectedViaje[clienteId] || 1;
     const montoBoleta = selectedMontoBoleta[clienteId] || 0;
-    const pedido = selectedEnvasesPedido[clienteId] || {};
-    const envases = {};
-    TIPOS_ENVASE.forEach(tipo => {
-      if(pedido[tipo]) envases[tipo] = { salieron: pedido[tipo], volvieron: 0 };
-    });
     const entregaId = `${fecha}_${clienteId}_v${viaje}`;
     batchWrites.push(setDoc(doc(db,'entregas',entregaId), {
       fecha, viaje, clienteId, nombre:cliente.nombre, direccion:cliente.direccion||'',
       numero:cliente.numero||'', telefono:cliente.telefono||'', camion, montoBoleta,
-      estado:'pendiente', formaPago:null, montos:{}, envases,
+      estado:'pendiente', formaPago:null, montos:{}, envases:{},
       envaseSaldoAlSalir: cliente.envaseSaldo || {},
       observaciones:'', horaEntrega:null
     }, {merge:true}));
@@ -876,7 +837,6 @@ async function guardarRutaDelDia(){
   await Promise.all(batchWrites);
   toast(`Reparto del ${fecha} confirmado: ${rutaSeleccion.size} clientes`);
   rutaSeleccion.clear();
-  selectedEnvasesPedido = {};
   renderDashboard();
   renderRutas();
 }
@@ -953,9 +913,10 @@ function envLabel(e){
   const tipos = Object.keys(envases);
   if(!tipos.length) return '—';
   return tipos.map(tipo=>{
-    const debe = (envases[tipo].salieron||0) - (envases[tipo].volvieron||0) - (envases[tipo].vendidos||0);
+    const por = BOTELLAS_POR_CAJON[tipo] || 1;
+    const debe = (envases[tipo].prestaron||0) - (envases[tipo].devolvieron||0) - ((envases[tipo].vendieron||0)/por);
     return debe>0
-      ? `<span class="badge debe">${tipo}: debe ${debe}</span>`
+      ? `<span class="badge debe">${tipo}: debe ${formatCajones(tipo, debe)}</span>`
       : `<span class="badge ok">${tipo}: completo</span>`;
   }).join(' ');
 }
@@ -1055,7 +1016,7 @@ function renderEnvasesTabla(){
           <tr>
             <td>${h.fecha ? fmtFechaCorta(h.fecha) : '—'}</td>
             <td>${tipo}</td>
-            <td>${m.salieron ? `Salieron ${formatCajones(tipo, m.salieron)}` : ''}${(m.salieron && (m.volvieron||m.vendidos)) ? ' · ' : ''}${m.volvieron ? `Volvieron ${formatCajones(tipo, m.volvieron)}` : ''}${m.volvieron && m.vendidos ? ' · ' : ''}${m.vendidos ? `Vendidos ${formatCajones(tipo, m.vendidos)}` : ''}</td>
+            <td>${m.prestaron ? `Prestaron ${formatCajones(tipo, m.prestaron)}` : ''}${(m.prestaron && (m.devolvieron||m.vendieron)) ? ' · ' : ''}${m.devolvieron ? `Devolvieron ${formatCajones(tipo, m.devolvieron)}` : ''}${m.devolvieron && m.vendieron ? ' · ' : ''}${m.vendieron ? `Vendieron ${m.vendieron} botellas` : ''}</td>
           </tr>`)).join('')
       : `<tr><td colspan="3" style="color:var(--ink-soft);">Sin movimientos registrados todavía.</td></tr>`;
 
@@ -1137,10 +1098,10 @@ async function renderConsolidado(){
       byGrupo[key].totalBoleta += (e.montoBoleta || 0);
       const envases = e.envases || {};
       Object.keys(envases).forEach(tipo=>{
-        byGrupo[key].tipos[tipo] = byGrupo[key].tipos[tipo] || {entregado:0, recuperado:0, vendido:0};
-        byGrupo[key].tipos[tipo].entregado += envases[tipo].salieron||0;
-        byGrupo[key].tipos[tipo].recuperado += envases[tipo].volvieron||0;
-        byGrupo[key].tipos[tipo].vendido += envases[tipo].vendidos||0;
+        byGrupo[key].tipos[tipo] = byGrupo[key].tipos[tipo] || {entregado:0, recuperado:0, vendidoBotellas:0};
+        byGrupo[key].tipos[tipo].entregado += envases[tipo].prestaron||0;
+        byGrupo[key].tipos[tipo].recuperado += envases[tipo].devolvieron||0;
+        byGrupo[key].tipos[tipo].vendidoBotellas += envases[tipo].vendieron||0;
       });
     });
     const grupos = Object.values(byGrupo).sort((a,b)=> a.camion.localeCompare(b.camion) || a.viaje-b.viaje);
@@ -1170,10 +1131,10 @@ async function renderConsolidado(){
             <span>${progreso.mensajeRegreso}</span>
           </div>
           <table>
-            <thead><tr><th>Producto</th><th>Salió depósito</th><th>Entregado</th><th>Recuperado</th><th>Vendido</th><th>Debería volver</th></tr></thead>
+            <thead><tr><th>Producto</th><th>Salió depósito</th><th>Prestado</th><th>Devuelto</th><th>Vendido (botellas)</th><th>Debería volver</th></tr></thead>
             <tbody>
             ${TIPOS_ENVASE.map(tipo=>{
-              const d = g.tipos[tipo] || {entregado:0, recuperado:0, vendido:0};
+              const d = g.tipos[tipo] || {entregado:0, recuperado:0, vendidoBotellas:0};
               const cargaInicial = cargaCamion[tipo] ?? '';
               const debeVolver = (cargaCamion[tipo]||0) - d.entregado + d.recuperado;
               return `
@@ -1185,13 +1146,13 @@ async function renderConsolidado(){
                   </td>
                   <td>${formatCajones(tipo, d.entregado)}</td>
                   <td>${formatCajones(tipo, d.recuperado)}</td>
-                  <td>${d.vendido ? formatCajones(tipo, d.vendido) : '—'}</td>
+                  <td>${d.vendidoBotellas ? `${d.vendidoBotellas} botellas` : '—'}</td>
                   <td><b>${formatCajones(tipo, debeVolver)}</b></td>
                 </tr>`;
             }).join('')}
             </tbody>
           </table>
-          <div class="sub" style="margin-top:6px; font-size:11.5px;">"Vendido" son envases que el cliente no tenía para devolver y se le cobraron — no vuelven físicamente al depósito, por eso no suman en "Debería volver".</div>
+          <div class="sub" style="margin-top:6px; font-size:11.5px;">"Vendido" son botellas sueltas que el cliente no tenía para devolver y se le cobraron — no vuelven físicamente al depósito, por eso no suman en "Debería volver".</div>
           <details style="margin-top:10px;">
             <summary style="cursor:pointer; font-size:12.5px; color:var(--ink-soft); font-weight:600;">Ver / modificar clientes de este viaje (${g.clientes.length})</summary>
             <table style="margin-top:8px;">
@@ -1298,10 +1259,7 @@ function actualizarTotalACobrar(){
   const descuento = parseFloat(document.getElementById('descuentoMonto')?.value) || 0;
   let botellasVendidas = 0;
   TIPOS_ENVASE.forEach((tipo, i)=>{
-    const por = BOTELLAS_POR_CAJON[tipo] || 1;
-    const vendCaj = parseInt(document.getElementById(`env_vend_caj_${i}`)?.value) || 0;
-    const vendBot = parseInt(document.getElementById(`env_vend_bot_${i}`)?.value) || 0;
-    botellasVendidas += (vendCaj * por) + vendBot;
+    botellasVendidas += parseInt(document.getElementById(`env_vendieron_${i}`)?.value) || 0;
   });
   const ventaEnvases = botellasVendidas * PRECIO_ENVASE;
   const total = Math.max(0, boleta - descuento + ventaEnvases);
@@ -1336,49 +1294,25 @@ function llenarSheet(e){
   document.getElementById('montoTransferencia').value = e.montos?.transferencia || '';
   document.getElementById('montoQR').value = e.montos?.qr || '';
 
-  document.getElementById('envaseInputs').innerHTML = TIPOS_ENVASE.map((tipo, i)=>{
-    const por = BOTELLAS_POR_CAJON[tipo] || 1;
-    return `
+  document.getElementById('envaseInputs').innerHTML = TIPOS_ENVASE.map((tipo, i)=>`
     <div style="border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:10px;">
-      <div style="font-weight:700; color:var(--ink); margin-bottom:6px;">${tipo} <span style="font-weight:400; color:var(--ink-soft); font-size:11.5px;">(cajón = ${por} botellas)</span></div>
-      <div class="row" style="align-items:flex-end; margin-bottom:6px;">
-        <div style="flex:1;">
-          <label style="margin-bottom:2px;">Salieron (cajones)</label>
-          <input type="number" id="env_sal_${i}" placeholder="0" ${editandoDesdeAdmin ? '' : 'readonly style="background:#f0efe9; color:var(--ink-soft);"'}>
-          <div class="sub" id="env_sal_txt_${i}" style="font-size:10.5px; margin-top:2px;"></div>
-        </div>
-      </div>
-      <div class="row" style="align-items:flex-end; margin-bottom:6px;">
-        <div><label style="margin-bottom:2px;">Volvieron — cajones</label><input type="number" min="0" id="env_vol_caj_${i}" placeholder="0" oninput="actualizarTotalACobrar()" style="width:75px;"></div>
-        <div><label style="margin-bottom:2px;">+ botellas sueltas</label><input type="number" min="0" max="${por-1}" id="env_vol_bot_${i}" placeholder="0" oninput="actualizarTotalACobrar()" style="width:75px;"></div>
-      </div>
+      <div style="font-weight:700; color:var(--ink); margin-bottom:6px;">${tipo}</div>
       <div class="row" style="align-items:flex-end;">
-        <div><label style="margin-bottom:2px;">Vendidos — cajones</label><input type="number" min="0" id="env_vend_caj_${i}" placeholder="0" oninput="actualizarTotalACobrar()" style="width:75px;"></div>
-        <div><label style="margin-bottom:2px;">+ botellas sueltas</label><input type="number" min="0" max="${por-1}" id="env_vend_bot_${i}" placeholder="0" oninput="actualizarTotalACobrar()" style="width:75px;"></div>
+        <div><label style="margin-bottom:2px;">Prestaron</label><input type="number" min="0" step="0.5" id="env_prestaron_${i}" placeholder="0" oninput="actualizarTotalACobrar()" style="width:70px;"></div>
+        <div><label style="margin-bottom:2px;">Devolvieron</label><input type="number" min="0" step="0.5" id="env_devolvieron_${i}" placeholder="0" oninput="actualizarTotalACobrar()" style="width:70px;"></div>
+        <div><label style="margin-bottom:2px;">Vendieron (botellas)</label><input type="number" min="0" id="env_vendieron_${i}" placeholder="0" oninput="actualizarTotalACobrar()" style="width:80px;"></div>
       </div>
     </div>
-  `;
-  }).join('');
+  `).join('');
   if(!editandoDesdeAdmin){
     document.getElementById('envaseInputs').insertAdjacentHTML('afterbegin',
-      `<div class="sub" style="margin-bottom:8px;">"Salieron" lo carga administración y no se puede editar acá. Cargá lo que volvió y lo que vendiste en cajones enteros + botellas sueltas — tal cual lo contás.</div>`);
+      `<div class="sub" style="margin-bottom:8px;">"Prestaron" es si el cliente se lleva cajones para devolver después. "Devolvieron" son cajones que trajo de vuelta. "Vendieron" son botellas sueltas que le cobraste porque no las tenía — los cajones completos no se venden, solo botellas sueltas.</div>`);
   }
   const envPrev = e.envases || {};
   TIPOS_ENVASE.forEach((tipo, i)=>{
-    const por = BOTELLAS_POR_CAJON[tipo] || 1;
-    const salieron = envPrev[tipo]?.salieron || 0;
-    document.getElementById(`env_sal_${i}`).value = salieron || '';
-    document.getElementById(`env_sal_txt_${i}`).textContent = salieron ? `= ${formatCajones(tipo, salieron)}` : '';
-
-    const volDecimal = envPrev[tipo]?.volvieron || 0;
-    const volTotalBotellas = Math.round(volDecimal * por);
-    document.getElementById(`env_vol_caj_${i}`).value = Math.floor(volTotalBotellas / por) || '';
-    document.getElementById(`env_vol_bot_${i}`).value = (volTotalBotellas % por) || '';
-
-    const vendDecimal = envPrev[tipo]?.vendidos || 0;
-    const vendTotalBotellas = Math.round(vendDecimal * por);
-    document.getElementById(`env_vend_caj_${i}`).value = Math.floor(vendTotalBotellas / por) || '';
-    document.getElementById(`env_vend_bot_${i}`).value = (vendTotalBotellas % por) || '';
+    document.getElementById(`env_prestaron_${i}`).value = envPrev[tipo]?.prestaron || '';
+    document.getElementById(`env_devolvieron_${i}`).value = envPrev[tipo]?.devolvieron || '';
+    document.getElementById(`env_vendieron_${i}`).value = envPrev[tipo]?.vendieron || '';
   });
   document.getElementById('obsInput').value = e.observaciones || '';
 
@@ -1431,15 +1365,10 @@ async function confirmarEntrega(){
   if(!selectedPago){ toast('Elegí una forma de pago'); return; }
   const envases = {};
   TIPOS_ENVASE.forEach((tipo, i)=>{
-    const por = BOTELLAS_POR_CAJON[tipo] || 1;
-    const salieron = parseFloat(document.getElementById(`env_sal_${i}`).value)||0;
-    const volCaj = parseInt(document.getElementById(`env_vol_caj_${i}`).value)||0;
-    const volBot = parseInt(document.getElementById(`env_vol_bot_${i}`).value)||0;
-    const vendCaj = parseInt(document.getElementById(`env_vend_caj_${i}`).value)||0;
-    const vendBot = parseInt(document.getElementById(`env_vend_bot_${i}`).value)||0;
-    const volvieron = volCaj + (volBot / por);
-    const vendidos = vendCaj + (vendBot / por);
-    if(salieron || volvieron || vendidos) envases[tipo] = { salieron, volvieron, vendidos };
+    const prestaron = parseFloat(document.getElementById(`env_prestaron_${i}`).value)||0;
+    const devolvieron = parseFloat(document.getElementById(`env_devolvieron_${i}`).value)||0;
+    const vendieron = parseInt(document.getElementById(`env_vendieron_${i}`).value)||0;
+    if(prestaron || devolvieron || vendieron) envases[tipo] = { prestaron, devolvieron, vendieron };
   });
   const montos = selectedPago==='mixto' ? {
     efectivo: parseFloat(document.getElementById('montoEfectivo').value)||0,
@@ -1467,7 +1396,7 @@ async function confirmarEntrega(){
   });
 
   // Recalcula el saldo de envases del cliente: resta el movimiento viejo, suma el nuevo
-  // (tanto lo devuelto físicamente como lo vendido saldan la deuda del cliente)
+  // (tanto lo devuelto físicamente como lo vendido — en botellas — saldan la deuda del cliente)
   const tiposAfectados = new Set([...Object.keys(envasesPrevios), ...Object.keys(envases)]);
   if(tiposAfectados.size){
     const clienteRef = doc(db,'clientes_reparto', activeClienteId);
@@ -1481,8 +1410,9 @@ async function confirmarEntrega(){
       const nuevoDebeDesde = {...debeDesdeActual};
       const movimientosEntrega = {};
       tiposAfectados.forEach(tipo=>{
-        const diffPrevio = (envasesPrevios[tipo]?.salieron||0) - (envasesPrevios[tipo]?.volvieron||0) - (envasesPrevios[tipo]?.vendidos||0);
-        const diffNuevo = (envases[tipo]?.salieron||0) - (envases[tipo]?.volvieron||0) - (envases[tipo]?.vendidos||0);
+        const por = BOTELLAS_POR_CAJON[tipo] || 1;
+        const diffPrevio = (envasesPrevios[tipo]?.prestaron||0) - (envasesPrevios[tipo]?.devolvieron||0) - ((envasesPrevios[tipo]?.vendieron||0)/por);
+        const diffNuevo = (envases[tipo]?.prestaron||0) - (envases[tipo]?.devolvieron||0) - ((envases[tipo]?.vendieron||0)/por);
         const saldoAnterior = nuevoSaldo[tipo] || 0;
         nuevoSaldo[tipo] = saldoAnterior - diffPrevio + diffNuevo;
         if(nuevoSaldo[tipo] > 0 && saldoAnterior <= 0){
@@ -1492,8 +1422,8 @@ async function confirmarEntrega(){
           // quedó saldado, se borra la fecha de inicio de deuda
           delete nuevoDebeDesde[tipo];
         }
-        if(envases[tipo] && (envases[tipo].salieron || envases[tipo].volvieron || envases[tipo].vendidos)){
-          movimientosEntrega[tipo] = { salieron: envases[tipo].salieron||0, volvieron: envases[tipo].volvieron||0, vendidos: envases[tipo].vendidos||0 };
+        if(envases[tipo] && (envases[tipo].prestaron || envases[tipo].devolvieron || envases[tipo].vendieron)){
+          movimientosEntrega[tipo] = { prestaron: envases[tipo].prestaron||0, devolvieron: envases[tipo].devolvieron||0, vendieron: envases[tipo].vendieron||0 };
         }
       });
       // un registro de historial por entrega — si se corrige, se reemplaza en vez de duplicar
