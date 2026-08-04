@@ -173,7 +173,8 @@
           <textarea id="csvInput" placeholder="1024,Almacén Don Pepe,Av. Colón 1234,3511234567
 1025,Kiosco La Esquina,Bv. San Juan 500,3517654321"></textarea>
         </div>
-        <button class="btn btn-primary" onclick="importClientes()">Importar listado</button>
+        <button class="btn btn-primary" onclick="importClientes()" id="importBtn">Importar listado</button>
+        <div class="sub" id="importProgress" style="margin-top:10px;"></div>
       </div>
       <div class="card">
         <h2>Clientes cargados</h2>
@@ -186,6 +187,10 @@
           <thead><tr><th>N°</th><th>Cliente</th><th>Teléfono</th><th></th></tr></thead>
           <tbody id="clientesTable"></tbody>
         </table>
+        <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line);">
+          <button class="btn btn-ghost" style="color:var(--red); border-color:var(--red);" onclick="borrarTodosClientes()" id="borrarTodosBtn">Borrar todos los clientes</button>
+          <div class="sub" style="margin-top:6px;">Usalo si una importación se duplicó o salió mal. Borra <b>todos</b> los clientes para volver a importar de cero. No afecta rutas ni entregas ya guardadas de días anteriores.</div>
+        </div>
       </div>
     </div>
 
@@ -521,18 +526,50 @@ async function loadCamiones(){
 async function importClientes(){
   const raw = document.getElementById('csvInput').value.trim();
   if(!raw){ toast('Pegá el listado primero'); return; }
-  const { db, collection, addDoc } = window.__fb;
+  const { db, collection, doc, writeBatch } = window.__fb;
   const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
-  let count = 0;
+
+  const registros = [];
   for(const line of lines){
     const parts = line.split(',').map(p=>p.trim());
     if(parts.length < 4) continue;
     const [numero, nombre, direccion, telefono] = parts;
-    await addDoc(collection(db, 'clientes_reparto'), { numero, nombre, direccion, telefono, activo:true, envaseSaldo:{} });
-    count++;
+    if(!nombre) continue;
+    registros.push({ numero, nombre, direccion, telefono, activo:true, envaseSaldo:{} });
   }
-  toast(`${count} clientes importados`);
-  document.getElementById('csvInput').value = '';
+
+  if(!registros.length){ toast('No encontré filas válidas para importar'); return; }
+
+  const btn = document.getElementById('importBtn');
+  const progressEl = document.getElementById('importProgress');
+  btn.disabled = true;
+  btn.textContent = 'Importando...';
+
+  const TAMAÑO_LOTE = 450; // margen bajo el límite de 500 escrituras por batch de Firestore
+  let importados = 0;
+  try {
+    for(let i = 0; i < registros.length; i += TAMAÑO_LOTE){
+      const lote = registros.slice(i, i + TAMAÑO_LOTE);
+      const batch = writeBatch(db);
+      lote.forEach(r => {
+        const ref = doc(collection(db, 'clientes_reparto'));
+        batch.set(ref, r);
+      });
+      await batch.commit();
+      importados += lote.length;
+      progressEl.textContent = `Importando... ${importados} de ${registros.length}`;
+    }
+    toast(`${importados} clientes importados`);
+    document.getElementById('csvInput').value = '';
+  } catch(err){
+    console.error(err);
+    toast('Hubo un error al importar. Se guardaron ' + importados + ' de ' + registros.length + '. Revisá la consola o reintentá.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Importar listado';
+    progressEl.textContent = '';
+  }
+
   await loadClientes();
   renderClientesTab();
 }
@@ -563,6 +600,43 @@ function renderClientesTab(){
 async function eliminarCliente(id){
   const { db, doc, deleteDoc } = window.__fb;
   await deleteDoc(doc(db, 'clientes_reparto', id));
+  await loadClientes();
+  renderClientesTab();
+}
+
+async function borrarTodosClientes(){
+  await loadClientes();
+  if(!CLIENTES.length){ toast('No hay clientes cargados'); return; }
+  const primeraConfirmacion = confirm(`Esto va a borrar los ${CLIENTES.length} clientes cargados. Esta acción no se puede deshacer. ¿Continuar?`);
+  if(!primeraConfirmacion) return;
+  const segundaConfirmacion = prompt('Para confirmar, escribí BORRAR (en mayúsculas):');
+  if(segundaConfirmacion !== 'BORRAR'){ toast('Cancelado — no se borró nada'); return; }
+
+  const { db, collection, doc, writeBatch } = window.__fb;
+  const btn = document.getElementById('borrarTodosBtn');
+  btn.disabled = true;
+  btn.textContent = 'Borrando...';
+
+  try {
+    const TAMAÑO_LOTE = 450;
+    let borrados = 0;
+    for(let i = 0; i < CLIENTES.length; i += TAMAÑO_LOTE){
+      const lote = CLIENTES.slice(i, i + TAMAÑO_LOTE);
+      const batch = writeBatch(db);
+      lote.forEach(c => batch.delete(doc(db, 'clientes_reparto', c.id)));
+      await batch.commit();
+      borrados += lote.length;
+      document.getElementById('clientesCount').textContent = `Borrando... ${borrados} de ${CLIENTES.length}`;
+    }
+    toast(`${borrados} clientes borrados`);
+  } catch(err){
+    console.error(err);
+    toast('Hubo un error al borrar. Revisá la consola.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Borrar todos los clientes';
+  }
+
   await loadClientes();
   renderClientesTab();
 }
@@ -803,17 +877,44 @@ async function renderEnvases(){
   renderConsolidado();
 }
 
+function calcularProgreso(clientes){
+  const total = clientes.length;
+  const entregados = clientes.filter(c => c.estado === 'entregado' && c.horaEntrega);
+  const completados = entregados.length;
+  const pct = total ? Math.round((completados/total)*100) : 0;
+
+  if(completados === 0){
+    return { pct, completados, mensajeRegreso: total ? 'Aún sin entregas — sin datos para estimar el regreso' : '' };
+  }
+  if(completados === total){
+    return { pct, completados, mensajeRegreso: 'Viaje completo' };
+  }
+
+  const horas = entregados.map(c => new Date(c.horaEntrega).getTime()).sort((a,b)=>a-b);
+  const primera = horas[0];
+  const ahora = Date.now();
+  const transcurridoMs = ahora - primera;
+  const ritmoPorClienteMs = transcurridoMs / completados;
+  const restantes = total - completados;
+  const restanteMs = ritmoPorClienteMs * restantes;
+  const horaRegreso = new Date(ahora + restanteMs);
+  const horaTxt = horaRegreso.toLocaleTimeString('es-AR', {hour:'2-digit', minute:'2-digit'});
+  return { pct, completados, mensajeRegreso: `Regreso estimado: ${horaTxt} (según el ritmo de hoy)` };
+}
+
 async function renderConsolidado(){
   const fecha = todayStr();
   const { db, collection, query, where, onSnapshot, doc, getDoc, setDoc } = window.__fb;
   const q = query(collection(db,'entregas'), where('fecha','==',fecha));
   onSnapshot(q, async (snap)=>{
-    const entregas = snap.docs.map(d=>d.data());
+    const entregas = snap.docs.map(d=>({id:d.id, ...d.data()}));
     const byGrupo = {}; // key = "Camion 1||1"
     entregas.forEach(e=>{
       const viaje = e.viaje || 1;
       const key = `${e.camion}||${viaje}`;
-      byGrupo[key] = byGrupo[key] || { camion:e.camion, viaje, tipos:{} };
+      byGrupo[key] = byGrupo[key] || { camion:e.camion, viaje, tipos:{}, clientes:[], totalBoleta:0 };
+      byGrupo[key].clientes.push(e);
+      byGrupo[key].totalBoleta += (e.montoBoleta || 0);
       const envases = e.envases || {};
       Object.keys(envases).forEach(tipo=>{
         byGrupo[key].tipos[tipo] = byGrupo[key].tipos[tipo] || {entregado:0, recuperado:0};
@@ -830,9 +931,21 @@ async function renderConsolidado(){
 
     document.getElementById('consolidadoCamiones').innerHTML = grupos.map((g, idx)=>{
       const cargaCamion = cargasPorGrupo[idx].exists() ? cargasPorGrupo[idx].data() : {};
+      const progreso = calcularProgreso(g.clientes);
       return `
         <div style="border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px;">
-          <div style="font-weight:700; margin-bottom:10px;">${g.camion} · Viaje ${g.viaje}</div>
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+            <div>
+              <div style="font-weight:700;">${g.camion} · Viaje ${g.viaje}</div>
+              <div class="sub" style="margin:2px 0 0;">${g.clientes.length} clientes · $${g.totalBoleta.toLocaleString('es-AR')} en boletas cargadas</div>
+            </div>
+            <button class="btn btn-ghost" style="color:var(--red); border-color:var(--red); padding:6px 12px; font-size:12px;" onclick="eliminarViaje('${g.camion}', ${g.viaje})">Eliminar viaje</button>
+          </div>
+          <div class="progress-bar" style="margin:10px 0 6px;"><div class="fill" style="width:${progreso.pct}%"></div></div>
+          <div class="sub" style="margin:0 0 12px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:6px;">
+            <span>${progreso.completados} de ${g.clientes.length} entregados</span>
+            <span>${progreso.mensajeRegreso}</span>
+          </div>
           <table>
             <thead><tr><th>Producto</th><th>Salió depósito</th><th>Entregado</th><th>Recuperado</th><th>Debería volver</th></tr></thead>
             <tbody>
@@ -851,10 +964,49 @@ async function renderConsolidado(){
             }).join('')}
             </tbody>
           </table>
+          <details style="margin-top:10px;">
+            <summary style="cursor:pointer; font-size:12.5px; color:var(--ink-soft); font-weight:600;">Ver / modificar clientes de este viaje (${g.clientes.length})</summary>
+            <table style="margin-top:8px;">
+              <thead><tr><th>Cliente</th><th>Estado</th><th>Boleta</th><th></th></tr></thead>
+              <tbody>
+                ${g.clientes.map(c=>`
+                  <tr>
+                    <td>${c.nombre}</td>
+                    <td><span class="badge ${c.estado==='entregado'?'entregado':'pendiente'}">${c.estado==='entregado'?'Entregado':'Pendiente'}</span></td>
+                    <td>${c.montoBoleta ? '$'+c.montoBoleta : '—'}</td>
+                    <td><button class="btn btn-ghost" style="padding:4px 8px; font-size:11.5px;" onclick="quitarClienteDeViaje('${c.id}','${c.nombre.replace(/'/g,"\\'")}')">Quitar</button></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </details>
         </div>
       `;
     }).join('') || `<div class="sub">Todavía no armaste ningún reparto hoy. Andá a "Armar rutas".</div>`;
   });
+}
+
+async function eliminarViaje(camion, viaje){
+  const fecha = todayStr();
+  const confirmado = confirm(`¿Eliminar el Viaje ${viaje} de ${camion}? Se van a borrar todas las entregas cargadas de ese viaje. Esta acción no se puede deshacer.`);
+  if(!confirmado) return;
+  const { db, collection, doc, deleteDoc, query, where, getDocs, writeBatch } = window.__fb;
+  const q = query(collection(db,'entregas'), where('fecha','==',fecha), where('camion','==',camion), where('viaje','==',viaje));
+  const snap = await getDocs(q);
+  const batch = writeBatch(db);
+  snap.docs.forEach(d => batch.delete(d.ref));
+  await batch.commit();
+  await deleteDoc(doc(db, 'cargas_camion', `${fecha}_${camion}_v${viaje}`)).catch(()=>{});
+  toast(`Viaje ${viaje} de ${camion} eliminado`);
+  renderDashboard();
+}
+
+async function quitarClienteDeViaje(entregaId, nombreCliente){
+  const confirmado = confirm(`¿Quitar a "${nombreCliente}" de este viaje?`);
+  if(!confirmado) return;
+  const { db, doc, deleteDoc } = window.__fb;
+  await deleteDoc(doc(db, 'entregas', entregaId));
+  toast('Cliente quitado del reparto');
 }
 
 async function guardarCargaInicial(camion, viaje, tipo, valor){
@@ -1020,10 +1172,10 @@ async function confirmarEntrega(){
 // exponer funciones usadas en HTML inline
 Object.assign(window, {
   doLogin, logout, switchTab, elegirViaje,
-  importClientes, eliminarCliente, renderRutas, renderBusquedaRutas, quitarDeRuta, guardarRutaDelDia,
+  importClientes, eliminarCliente, borrarTodosClientes, renderRutas, renderBusquedaRutas, quitarDeRuta, guardarRutaDelDia,
   openSheet, openSheetAdmin, closeSheet, selectPago, confirmarEntrega,
   openAnticipoSheet, closeAnticipoSheet, selectAnticipoTipo, guardarAnticipo,
-  guardarCargaInicial, renderClientesTab
+  guardarCargaInicial, eliminarViaje, quitarClienteDeViaje, renderClientesTab
 });
 </script>
 </body>
