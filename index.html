@@ -216,6 +216,11 @@
         <div class="sub">Por cada cliente: camión, N° de viaje, y monto de la boleta. Los envases (préstamos, devoluciones y ventas de botellas) los carga el chofer cuando llega a cada cliente.</div>
         <div class="sub" id="rutaSeleccionCount"></div>
         <div id="rutaSeleccionados"></div>
+      </div>
+      <div class="card">
+        <h2>Carga inicial de cajones</h2>
+        <div class="sub">Un solo total por camión/viaje — no hace falta cargarlo por cliente. Se guarda junto con el reparto al confirmar.</div>
+        <div id="cargaInicialRuta"></div>
         <button class="btn btn-primary" style="margin-top:10px;" onclick="guardarRutaDelDia()">Confirmar reparto del día</button>
       </div>
     </div>
@@ -798,13 +803,58 @@ function renderSeleccionados(){
   }).join('') || `<div class="sub">Todavía no agregaste clientes. Buscalos arriba.</div>`;
 
   document.querySelectorAll('.camionSelectRow').forEach(sel=>{
-    sel.addEventListener('change', ()=>{ selectedCamion[sel.dataset.cliente] = sel.value; });
+    sel.addEventListener('change', ()=>{ selectedCamion[sel.dataset.cliente] = sel.value; renderCargaInicialRuta(); });
   });
   document.querySelectorAll('.viajeInputRow').forEach(inp=>{
-    inp.addEventListener('change', ()=>{ selectedViaje[inp.dataset.cliente] = parseInt(inp.value) || 1; });
+    inp.addEventListener('change', ()=>{ selectedViaje[inp.dataset.cliente] = parseInt(inp.value) || 1; renderCargaInicialRuta(); });
   });
   document.querySelectorAll('.boletaInputRow').forEach(inp=>{
     inp.addEventListener('change', ()=>{ selectedMontoBoleta[inp.dataset.cliente] = parseFloat(inp.value) || 0; });
+  });
+  renderCargaInicialRuta();
+}
+
+let cargaInicialRuta = {}; // { "Camion 1||1": { 'Coca-Cola': 150, 'Cerveza': 15 } }
+
+async function renderCargaInicialRuta(){
+  const el = document.getElementById('cargaInicialRuta');
+  if(!el) return;
+  const fecha = document.getElementById('rutaFecha').value || todayStr();
+  const combos = new Set();
+  rutaSeleccion.forEach(cid => {
+    const camion = selectedCamion[cid];
+    const viaje = selectedViaje[cid] || 1;
+    if(camion) combos.add(`${camion}||${viaje}`);
+  });
+  if(!combos.size){
+    el.innerHTML = `<div class="sub">Agregá clientes arriba para ver por qué camión/viaje cargar el total.</div>`;
+    return;
+  }
+  const { db, doc, getDoc } = window.__fb;
+  el.innerHTML = (await Promise.all([...combos].sort().map(async key=>{
+    const [camion, viaje] = key.split('||');
+    if(!cargaInicialRuta[key]){
+      const snap = await getDoc(doc(db,'cargas_camion', `${fecha}_${camion}_v${viaje}`));
+      cargaInicialRuta[key] = snap.exists() ? {...snap.data()} : {};
+    }
+    return `
+      <div style="border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:8px;">
+        <div style="font-weight:700; margin-bottom:6px;">${camion} · Viaje ${viaje}</div>
+        <div class="row" style="align-items:flex-end;">
+          ${TIPOS_ENVASE.map(tipo=>`
+            <label class="field-mini"><span>${tipo}</span>
+              <input type="number" min="0" step="0.5" class="cargaInicialInput" data-key="${key}" data-tipo="${tipo}" value="${cargaInicialRuta[key][tipo] || ''}" placeholder="0" style="width:90px;">
+            </label>
+          `).join('')}
+        </div>
+      </div>`;
+  }))).join('');
+  document.querySelectorAll('.cargaInicialInput').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const key = inp.dataset.key, tipo = inp.dataset.tipo;
+      if(!cargaInicialRuta[key]) cargaInicialRuta[key] = {};
+      cargaInicialRuta[key][tipo] = parseFloat(inp.value) || 0;
+    });
   });
 }
 
@@ -834,9 +884,18 @@ async function guardarRutaDelDia(){
       observaciones:'', horaEntrega:null
     }, {merge:true}));
   }
+  // Guarda la carga inicial (total de cajones) de cada camión/viaje involucrado
+  Object.keys(cargaInicialRuta).forEach(key=>{
+    const [camion, viaje] = key.split('||');
+    const valores = cargaInicialRuta[key];
+    if(valores && Object.keys(valores).length){
+      batchWrites.push(setDoc(doc(db,'cargas_camion', `${fecha}_${camion}_v${viaje}`), valores, {merge:true}));
+    }
+  });
   await Promise.all(batchWrites);
   toast(`Reparto del ${fecha} confirmado: ${rutaSeleccion.size} clientes`);
   rutaSeleccion.clear();
+  cargaInicialRuta = {};
   renderDashboard();
   renderRutas();
 }
