@@ -930,6 +930,11 @@ function fmtFechaCorta(iso){
   return `${d}/${m}`;
 }
 
+function toggleHistorial(clienteId){
+  const row = document.getElementById(`hist-${clienteId}`);
+  if(row) row.classList.toggle('hidden');
+}
+
 async function renderEnvases(){
   await loadClientes();
   renderEnvasesTabla();
@@ -956,11 +961,31 @@ function renderEnvasesTabla(){
       .filter(t => saldo[t])
       .map(t => `<span class="badge ${saldo[t]>0?'debe':'ok'}">${t}: ${saldo[t]}${saldo[t]>0 && debeDesde[t] ? ' (desde '+fmtFechaCorta(debeDesde[t])+')' : ''}</span>`)
       .join(' ');
+
+    const historial = Object.values(c.envaseHistorial || {}).sort((a,b)=> (b.fecha||'').localeCompare(a.fecha||''));
+    const filasHistorial = historial.length
+      ? historial.flatMap(h => Object.entries(h.movimientos||{}).map(([tipo, m])=>`
+          <tr>
+            <td>${h.fecha ? fmtFechaCorta(h.fecha) : '—'}</td>
+            <td>${tipo}</td>
+            <td>${m.salieron ? `Salieron ${m.salieron}` : ''}${m.salieron && m.volvieron ? ' · ' : ''}${m.volvieron ? `Volvieron ${m.volvieron}` : ''}</td>
+          </tr>`)).join('')
+      : `<tr><td colspan="3" style="color:var(--ink-soft);">Sin movimientos registrados todavía.</td></tr>`;
+
     return `
-      <tr>
+      <tr class="histToggleRow" onclick="toggleHistorial('${c.id}')" style="cursor:pointer;">
         <td>${c.numero||'—'}</td>
         <td>${c.nombre}</td>
         <td>${badges || `<span class="badge ok">Al día</span>`}</td>
+      </tr>
+      <tr id="hist-${c.id}" class="hidden">
+        <td colspan="3" style="background:#f7f6f1; padding:12px 16px;">
+          <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-soft); margin-bottom:8px;">Historial de préstamos y devoluciones — ${c.nombre}</div>
+          <table>
+            <thead><tr><th>Fecha</th><th>Producto</th><th>Movimiento</th></tr></thead>
+            <tbody>${filasHistorial}</tbody>
+          </table>
+        </td>
       </tr>`;
   }).join('') || `<tr><td colspan="3" style="color:var(--ink-soft);">${soloDeuda ? 'Ningún cliente debe cajones en este momento.' : 'Sin resultados.'}</td></tr>`;
 
@@ -1284,8 +1309,10 @@ async function confirmarEntrega(){
       const snap = await tx.get(clienteRef);
       const saldoActual = snap.exists() ? (snap.data().envaseSaldo||{}) : {};
       const debeDesdeActual = snap.exists() ? (snap.data().envaseDebeDesde||{}) : {};
+      const historialActual = snap.exists() ? (snap.data().envaseHistorial||{}) : {};
       const nuevoSaldo = {...saldoActual};
       const nuevoDebeDesde = {...debeDesdeActual};
+      const movimientosEntrega = {};
       tiposAfectados.forEach(tipo=>{
         const diffPrevio = (envasesPrevios[tipo]?.salieron||0) - (envasesPrevios[tipo]?.volvieron||0);
         const diffNuevo = (envases[tipo]?.salieron||0) - (envases[tipo]?.volvieron||0);
@@ -1298,8 +1325,18 @@ async function confirmarEntrega(){
           // quedó saldado, se borra la fecha de inicio de deuda
           delete nuevoDebeDesde[tipo];
         }
+        if(envases[tipo] && (envases[tipo].salieron || envases[tipo].volvieron)){
+          movimientosEntrega[tipo] = { salieron: envases[tipo].salieron||0, volvieron: envases[tipo].volvieron||0 };
+        }
       });
-      tx.update(clienteRef, { envaseSaldo: nuevoSaldo, envaseDebeDesde: nuevoDebeDesde });
+      // un registro de historial por entrega — si se corrige, se reemplaza en vez de duplicar
+      const nuevoHistorial = {...historialActual};
+      if(Object.keys(movimientosEntrega).length){
+        nuevoHistorial[activeEntregaId] = { fecha: fechaHoy, movimientos: movimientosEntrega };
+      } else {
+        delete nuevoHistorial[activeEntregaId];
+      }
+      tx.update(clienteRef, { envaseSaldo: nuevoSaldo, envaseDebeDesde: nuevoDebeDesde, envaseHistorial: nuevoHistorial });
     });
   }
   toast('Entrega guardada');
@@ -1312,7 +1349,7 @@ Object.assign(window, {
   importClientes, eliminarCliente, borrarTodosClientes, renderRutas, renderBusquedaRutas, quitarDeRuta, guardarRutaDelDia,
   openSheet, openSheetAdmin, closeSheet, selectPago, confirmarEntrega,
   openAnticipoSheet, closeAnticipoSheet, selectAnticipoTipo, guardarAnticipo,
-  guardarCargaInicial, eliminarViaje, quitarClienteDeViaje, renderClientesTab, renderEnvasesTabla
+  guardarCargaInicial, eliminarViaje, quitarClienteDeViaje, renderClientesTab, renderEnvasesTabla, toggleHistorial
 });
 </script>
 </body>
