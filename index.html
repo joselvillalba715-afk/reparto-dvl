@@ -59,6 +59,8 @@
   textarea{min-height:110px; font-family:var(--mono); font-size:12.5px;}
   label{font-size:12px; color:var(--ink-soft); display:block; margin-bottom:4px; font-weight:600;}
   .field{margin-bottom:12px;}
+  .field-mini{display:flex; flex-direction:column; gap:3px;}
+  .field-mini span{font-size:10px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.03em; white-space:nowrap; font-weight:600;}
   .row{display:flex; gap:10px;}
   .row > *{flex:1;}
 
@@ -705,15 +707,23 @@ function renderSeleccionados(){
     if(!selectedViaje[c.id]) selectedViaje[c.id] = 1;
     if(!selectedEnvasesPedido[c.id]) selectedEnvasesPedido[c.id] = {};
     return `
-    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:9px 0; border-bottom:1px solid #ece9df;">
-      <div style="flex:1; min-width:160px; font-size:14px;"><b>${c.nombre}</b><br><span style="color:var(--ink-soft); font-size:12px;">${c.direccion||''}</span></div>
-      <select class="camionSelectRow" data-cliente="${c.id}" style="width:auto; font-size:12.5px; padding:6px 8px;">
-        ${opcionesCamion.map(op=>`<option value="${op}" ${selectedCamion[c.id]===op?'selected':''}>${op}</option>`).join('')}
-      </select>
-      <input type="number" min="1" class="viajeInputRow" data-cliente="${c.id}" value="${selectedViaje[c.id]}" title="N° de viaje" style="width:56px; font-size:12.5px; padding:6px 8px;">
-      <input type="number" min="0" class="boletaInputRow" data-cliente="${c.id}" value="${selectedMontoBoleta[c.id] || ''}" placeholder="$ boleta" title="Monto de la boleta" style="width:90px; font-size:12.5px; padding:6px 8px;">
+    <div style="display:flex; align-items:flex-end; gap:8px; flex-wrap:wrap; padding:9px 0; border-bottom:1px solid #ece9df;">
+      <div style="flex:1; min-width:160px; font-size:14px; padding-bottom:6px;"><b>${c.nombre}</b><br><span style="color:var(--ink-soft); font-size:12px;">${c.direccion||''}</span></div>
+      <label class="field-mini"><span>Camión</span>
+        <select class="camionSelectRow" data-cliente="${c.id}" style="width:auto; font-size:12.5px; padding:6px 8px;">
+          ${opcionesCamion.map(op=>`<option value="${op}" ${selectedCamion[c.id]===op?'selected':''}>${op}</option>`).join('')}
+        </select>
+      </label>
+      <label class="field-mini"><span>N° viaje</span>
+        <input type="number" min="1" class="viajeInputRow" data-cliente="${c.id}" value="${selectedViaje[c.id]}" style="width:56px; font-size:12.5px; padding:6px 8px;">
+      </label>
+      <label class="field-mini"><span>$ Boleta</span>
+        <input type="number" min="0" class="boletaInputRow" data-cliente="${c.id}" value="${selectedMontoBoleta[c.id] || ''}" placeholder="0" style="width:90px; font-size:12.5px; padding:6px 8px;">
+      </label>
       ${TIPOS_ENVASE.map(tipo=>`
-        <input type="number" min="0" class="envasePedidoInputRow" data-cliente="${c.id}" data-tipo="${tipo}" value="${selectedEnvasesPedido[c.id][tipo] || ''}" placeholder="0" title="Cajones de ${tipo} en el pedido" style="width:60px; font-size:12.5px; padding:6px 8px;">
+        <label class="field-mini"><span>${tipo}</span>
+          <input type="number" min="0" class="envasePedidoInputRow" data-cliente="${c.id}" data-tipo="${tipo}" value="${selectedEnvasesPedido[c.id][tipo] || ''}" placeholder="0" style="width:60px; font-size:12.5px; padding:6px 8px;">
+        </label>
       `).join('')}
       <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="quitarDeRuta('${c.id}')">Quitar</button>
     </div>`;
