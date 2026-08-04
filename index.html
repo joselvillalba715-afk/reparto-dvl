@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>DVL · Control de Repartos</title>
+<style>
+  :root{
+    --bg:#f2f1ec;
+    --panel:#ffffff;
+    --ink:#1c1f1a;
+    --ink-soft:#5b5f56;
+    --line:#dedad0;
+    --amber:#c47a1f;
+    --amber-bg:#fbeedc;
+    --green:#2f6b3f;
+    --green-bg:#e4efe0;
+    --red:#a53d3d;
+    --red-bg:#f6e4e0;
+    --blue:#2f4b6b;
+    --mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  body{margin:0; font-family:var(--sans); background:var(--bg); color:var(--ink); min-height:100vh;}
+  .hidden{display:none !important;}
+
+  /* ---------- Pantalla de selección de rol ---------- */
+  #gate{min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:24px; gap:28px;}
+  #gate .brand{text-align:center;}
+  #gate .brand .mark{font-family:var(--mono); font-size:13px; letter-spacing:.18em; color:var(--ink-soft); text-transform:uppercase;}
+  #gate .brand h1{font-size:28px; margin:6px 0 0; font-weight:700;}
+  .gate-cards{display:flex; gap:16px; flex-wrap:wrap; justify-content:center;}
+  .gate-card{width:200px; padding:22px 18px; background:var(--panel); border:1px solid var(--line); border-radius:14px; cursor:pointer; text-align:left; transition:transform .12s, border-color .12s;}
+  .gate-card:active{transform:scale(.97);}
+  .gate-card:hover{border-color:var(--ink);}
+  .gate-card .num{font-family:var(--mono); font-size:12px; color:var(--ink-soft);}
+  .gate-card h3{margin:8px 0 4px; font-size:18px;}
+  .gate-card p{margin:0; font-size:13px; color:var(--ink-soft); line-height:1.4;}
+
+  /* ---------- Layout general ---------- */
+  header.topbar{position:sticky; top:0; z-index:20; background:var(--ink); color:#fff; padding:12px 16px; display:flex; align-items:center; justify-content:space-between;}
+  header.topbar .title{font-weight:700; font-size:15px; display:flex; align-items:center; gap:10px;}
+  header.topbar .title .mark{font-family:var(--mono); font-size:11px; letter-spacing:.15em; color:#c9c6b8; text-transform:uppercase;}
+  header.topbar button{background:transparent; border:1px solid #55584f; color:#fff; padding:7px 12px; border-radius:8px; font-size:13px; cursor:pointer;}
+
+  main{max-width:960px; margin:0 auto; padding:16px;}
+
+  /* ---------- Tabs admin ---------- */
+  .tabs{display:flex; gap:6px; margin-bottom:16px; overflow-x:auto; padding-bottom:2px;}
+  .tab{font-family:var(--mono); font-size:12px; letter-spacing:.04em; padding:9px 14px; border-radius:999px; border:1px solid var(--line); background:var(--panel); cursor:pointer; white-space:nowrap; color:var(--ink-soft);}
+  .tab.active{background:var(--ink); color:#fff; border-color:var(--ink);}
+
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; margin-bottom:14px;}
+  .card h2{margin:0 0 4px; font-size:16px;}
+  .card .sub{color:var(--ink-soft); font-size:13px; margin-bottom:14px;}
+
+  textarea, input, select{font-family:var(--sans); font-size:14px; border:1px solid var(--line); border-radius:8px; padding:9px 10px; width:100%; background:#fff;}
+  textarea{min-height:110px; font-family:var(--mono); font-size:12.5px;}
+  label{font-size:12px; color:var(--ink-soft); display:block; margin-bottom:4px; font-weight:600;}
+  .field{margin-bottom:12px;}
+  .row{display:flex; gap:10px;}
+  .row > *{flex:1;}
+
+  .btn{display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:10px 16px; border-radius:9px; border:none; font-size:14px; font-weight:600; cursor:pointer;}
+  .btn-primary{background:var(--ink); color:#fff;}
+  .btn-primary:active{opacity:.85;}
+  .btn-ghost{background:transparent; border:1px solid var(--line); color:var(--ink);}
+  .btn-block{width:100%;}
+
+  table{width:100%; border-collapse:collapse; font-size:13.5px;}
+  th{text-align:left; font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid var(--line); padding:8px 6px;}
+  td{padding:9px 6px; border-bottom:1px solid #ece9df;}
+  tr:last-child td{border-bottom:none;}
+
+  .badge{font-family:var(--mono); font-size:11px; padding:3px 8px; border-radius:6px; font-weight:600;}
+  .badge.pendiente{background:var(--amber-bg); color:var(--amber);}
+  .badge.entregado{background:var(--green-bg); color:var(--green);}
+  .badge.debe{background:var(--red-bg); color:var(--red);}
+  .badge.ok{background:var(--green-bg); color:var(--green);}
+
+  /* ---------- Vista chofer ---------- */
+  .route-list{display:flex; flex-direction:column; gap:10px;}
+  .stop{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px 16px; display:flex; justify-content:space-between; align-items:center; gap:10px; cursor:pointer;}
+  .stop.entregado{opacity:.6;}
+  .stop .info .name{font-weight:700; font-size:15px;}
+  .stop .info .meta{font-size:12.5px; color:var(--ink-soft); margin-top:2px;}
+  .stop .chev{color:var(--ink-soft); font-size:20px;}
+
+  .progress-bar{height:6px; background:var(--line); border-radius:99px; overflow:hidden; margin:14px 0;}
+  .progress-bar .fill{height:100%; background:var(--green); transition:width .3s;}
+
+  /* ---------- Modal ---------- */
+  .overlay{position:fixed; inset:0; background:rgba(20,20,16,.5); display:flex; align-items:flex-end; justify-content:center; z-index:50;}
+  .sheet{background:#fff; width:100%; max-width:520px; border-radius:18px 18px 0 0; padding:22px 20px 26px; max-height:92vh; overflow-y:auto;}
+  .sheet h3{margin:0 0 2px;}
+  .sheet .addr{color:var(--ink-soft); font-size:13px; margin-bottom:16px;}
+  .pill-group{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;}
+  .pill{border:1px solid var(--line); border-radius:999px; padding:8px 14px; font-size:13px; cursor:pointer; background:#fff;}
+  .pill.selected{background:var(--ink); color:#fff; border-color:var(--ink);}
+  .close-x{position:absolute; top:16px; right:16px; background:none; border:none; font-size:20px; cursor:pointer; color:var(--ink-soft);}
+  .sheet-wrap{position:relative;}
+
+  .empty{text-align:center; padding:40px 20px; color:var(--ink-soft);}
+  .toast{position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:var(--ink); color:#fff; padding:11px 20px; border-radius:10px; font-size:13.5px; z-index:100;}
+
+  @media (max-width:600px){
+    .row{flex-direction:column;}
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ PANTALLA INICIAL (LOGIN) ============ -->
+<div id="gate">
+  <div class="brand">
+    <div class="mark">Distribuidora Villa Libertador</div>
+    <h1>Control de Repartos</h1>
+  </div>
+  <div class="card" style="width:280px;">
+    <div class="field">
+      <label>Usuario (email)</label>
+      <input type="email" id="loginEmail" placeholder="chofer1@dvl.com" autocomplete="username">
+    </div>
+    <div class="field">
+      <label>Contraseña</label>
+      <input type="password" id="loginPass" placeholder="••••••••" autocomplete="current-password">
+    </div>
+    <button class="btn btn-primary btn-block" onclick="doLogin()">Ingresar</button>
+    <div id="loginError" class="hidden sub" style="color:var(--red); margin-top:10px; margin-bottom:0;"></div>
+  </div>
+</div>
+
+<!-- ============ VISTA ADMIN ============ -->
+<div id="adminView" class="hidden">
+  <header class="topbar">
+    <div class="title"><span class="mark">DVL</span> Administración</div>
+    <button onclick="logout()">Salir</button>
+  </header>
+  <main>
+    <div class="tabs">
+      <div class="tab active" data-tab="dashboard" onclick="switchTab('dashboard')">Hoy</div>
+      <div class="tab" data-tab="clientes" onclick="switchTab('clientes')">Clientes</div>
+      <div class="tab" data-tab="rutas" onclick="switchTab('rutas')">Armar rutas</div>
+      <div class="tab" data-tab="envases" onclick="switchTab('envases')">Envases</div>
+    </div>
+
+    <!-- HOY -->
+    <div id="tab-dashboard">
+      <div class="card">
+        <h2>Estado del día</h2>
+        <div class="sub" id="dashDate">—</div>
+        <div id="dashSummary"></div>
+      </div>
+      <div id="dashByCamion"></div>
+    </div>
+
+    <!-- CLIENTES -->
+    <div id="tab-clientes" class="hidden">
+      <div class="card">
+        <h2>Importar clientes</h2>
+        <div class="sub">Pegá el listado exportado del sistema FoxPro. Formato por línea: <b>nombre,direccion,zona,camion</b> (una fila por cliente, separado por comas).</div>
+        <div class="field">
+          <textarea id="csvInput" placeholder="Almacén Don Pepe,Av. Colón 1234,Centro,Camion 1
+Kiosco La Esquina,Bv. San Juan 500,Alberdi,Camion 2"></textarea>
+        </div>
+        <button class="btn btn-primary" onclick="importClientes()">Importar listado</button>
+      </div>
+      <div class="card">
+        <h2>Clientes cargados</h2>
+        <div class="sub" id="clientesCount"></div>
+        <table>
+          <thead><tr><th>Cliente</th><th>Zona</th><th>Camión</th><th></th></tr></thead>
+          <tbody id="clientesTable"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ARMAR RUTAS -->
+    <div id="tab-rutas" class="hidden">
+      <div class="card">
+        <h2>Reparto del día</h2>
+        <div class="sub">Elegí la fecha y activá los clientes que salen a reparto hoy. Ya vienen agrupados por camión según la zona asignada.</div>
+        <div class="field" style="max-width:220px;">
+          <label>Fecha</label>
+          <input type="date" id="rutaFecha" onchange="renderRutas()">
+        </div>
+        <div id="rutasByCamion"></div>
+        <button class="btn btn-primary" style="margin-top:10px;" onclick="guardarRutaDelDia()">Confirmar reparto del día</button>
+      </div>
+    </div>
+
+    <!-- ENVASES -->
+    <div id="tab-envases" class="hidden">
+      <div class="card">
+        <h2>Consolidado de hoy por camión</h2>
+        <div class="sub">Cuántos cajones de cada producto salieron del depósito, cuántos se entregaron, cuántos volvieron de los clientes, y cuántos deberían volver al depósito.</div>
+        <div id="consolidadoCamiones"></div>
+      </div>
+      <div class="card">
+        <h2>Cuenta corriente de envases por cliente</h2>
+        <div class="sub">Saldo acumulado de cajones retornables que cada cliente tiene pendiente de devolver, por producto.</div>
+        <table>
+          <thead><tr><th>Cliente</th><th>Zona</th><th>Saldo pendiente</th></tr></thead>
+          <tbody id="envasesTable"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ============ VISTA CHOFER ============ -->
+<div id="driverView" class="hidden">
+  <header class="topbar">
+    <div class="title"><span class="mark" id="driverCamionLabel">Camión</span> Mi reparto</div>
+    <button onclick="logout()">Salir</button>
+  </header>
+  <main>
+    <div class="card" style="margin-bottom:12px;">
+      <div class="sub" id="driverDate">—</div>
+      <div class="progress-bar"><div class="fill" id="progressFill" style="width:0%"></div></div>
+      <div class="sub" id="progressText">0 de 0 entregados</div>
+    </div>
+    <div class="route-list" id="stopsList"></div>
+    <div id="driverEmpty" class="empty hidden">No hay clientes asignados para hoy en este camión.<br>Pedile al administrador que arme el reparto del día.</div>
+  </main>
+</div>
+
+<!-- ============ MODAL ENTREGA ============ -->
+<div id="deliveryOverlay" class="overlay hidden" onclick="if(event.target===this)closeSheet()">
+  <div class="sheet">
+    <div class="sheet-wrap">
+      <button class="close-x" onclick="closeSheet()">✕</button>
+      <h3 id="sheetClientName">—</h3>
+      <div class="addr" id="sheetClientAddr">—</div>
+      <div id="anticipoBanner" class="hidden" style="background:var(--green-bg); color:var(--green); border-radius:10px; padding:10px 12px; font-size:13px; margin-bottom:14px; font-weight:600;"></div>
+
+      <label>Forma de pago</label>
+      <div class="pill-group" id="pagoPills">
+        <div class="pill" data-pago="efectivo" onclick="selectPago('efectivo')">Efectivo</div>
+        <div class="pill" data-pago="transferencia" onclick="selectPago('transferencia')">Transferencia</div>
+        <div class="pill" data-pago="qr" onclick="selectPago('qr')">QR</div>
+        <div class="pill" data-pago="mixto" onclick="selectPago('mixto')">Mixto</div>
+        <div class="pill" data-pago="no_pago" onclick="selectPago('no_pago')">No pagó / cta. cte.</div>
+      </div>
+
+      <div id="mixtoFields" class="hidden">
+        <div class="row">
+          <div class="field"><label>Efectivo ($)</label><input type="number" id="montoEfectivo" placeholder="0"></div>
+          <div class="field"><label>Transferencia ($)</label><input type="number" id="montoTransferencia" placeholder="0"></div>
+        </div>
+        <div class="field"><label>QR ($)</label><input type="number" id="montoQR" placeholder="0"></div>
+      </div>
+
+      <div class="field">
+        <label>Envases retornables (por producto)</label>
+        <div id="envaseInputs"></div>
+        <div class="sub" style="margin:6px 0 0;">Si un cliente devuelve un cajón que debía de antes, poné el número en "Volvieron" aunque ese cajón no haya salido hoy con él — así el sistema avisa que tiene que volver un cajón más al depósito.</div>
+      </div>
+
+      <div class="field">
+        <label>Observaciones</label>
+        <textarea id="obsInput" style="min-height:70px; font-family:var(--sans); font-size:14px;" placeholder="Ej: quedan debiendo 2 cajones, vuelven la semana que viene"></textarea>
+      </div>
+
+      <button class="btn btn-primary btn-block" onclick="confirmarEntrega()">Confirmar entrega</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL TRANSFERENCIA CONFIRMADA (ADMIN) ============ -->
+<div id="anticipoOverlay" class="overlay hidden" onclick="if(event.target===this)closeAnticipoSheet()">
+  <div class="sheet">
+    <div class="sheet-wrap">
+      <button class="close-x" onclick="closeAnticipoSheet()">✕</button>
+      <h3>Marcar transferencia recibida</h3>
+      <div class="addr" id="anticipoClientName">—</div>
+
+      <div class="field">
+        <label>Monto transferido ($)</label>
+        <input type="number" id="anticipoMonto" placeholder="0">
+      </div>
+
+      <label>¿Cubre todo el pedido o es parcial?</label>
+      <div class="pill-group" id="anticipoPills">
+        <div class="pill selected" data-tipo="total" onclick="selectAnticipoTipo('total')">Pago total</div>
+        <div class="pill" data-tipo="parcial" onclick="selectAnticipoTipo('parcial')">Pago parcial</div>
+      </div>
+
+      <div class="field">
+        <label>Nota para el chofer (opcional)</label>
+        <input type="text" id="anticipoNota" placeholder="Ej: transfirió $15.000, faltan $3.000 en efectivo">
+      </div>
+
+      <button class="btn btn-primary btn-block" onclick="guardarAnticipo()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<!-- ============ FIREBASE ============ -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {
+  getFirestore, collection, doc, getDocs, getDoc, setDoc, addDoc,
+  updateDoc, query, where, onSnapshot, runTransaction, deleteDoc, writeBatch
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {
+  getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+/* =======================================================================
+   TODO — Pegá acá la configuración de tu proyecto Firebase.
+   Podés reutilizar el MISMO proyecto que ya usa el catálogo
+   (catalogo.distvillalibertador.com.ar) y simplemente agregar estas
+   colecciones nuevas: clientes_reparto, rutas_diarias, entregas.
+   ======================================================================= */
+const firebaseConfig = {
+  apiKey: "TU_API_KEY",
+  authDomain: "TU_PROYECTO.firebaseapp.com",
+  projectId: "TU_PROYECTO",
+  storageBucket: "TU_PROYECTO.appspot.com",
+  messagingSenderId: "TU_SENDER_ID",
+  appId: "TU_APP_ID"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
+
+window.__fb = {
+  db, collection, doc, getDocs, getDoc, setDoc, addDoc, updateDoc, query, where,
+  onSnapshot, runTransaction, deleteDoc, writeBatch,
+  auth, signInWithEmailAndPassword, onAuthStateChanged, signOut
+};
+</script>
+
+<script>
+/* =======================================================================
+   ESTADO Y LÓGICA DE LA APP
+   ======================================================================= */
+// Tipos de cajón retornable que se controlan por separado. Sumá o cambiá nombres acá si hace falta.
+const TIPOS_ENVASE = ['Coca-Cola', 'Cerveza'];
+
+let CLIENTES = [];          // {id, nombre, direccion, zona, camion}
+let CAMIONES = [];          // lista de camiones detectados
+let RUTA_HOY = [];          // ids de clientes activos hoy (por camión al armar)
+let ENTREGAS_HOY = {};      // clienteId -> entrega doc
+let currentRole = null;     // 'admin' | 'driver'
+let currentCamion = null;
+let activeClienteId = null;
+let selectedPago = null;
+
+function todayStr(){ return new Date().toISOString().slice(0,10); }
+function fmtDate(d){
+  return new Date(d+'T00:00:00').toLocaleDateString('es-AR', {weekday:'long', day:'numeric', month:'long'});
+}
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.remove('hidden');
+  setTimeout(()=>t.classList.add('hidden'), 2200);
+}
+
+/* ---------- Login y ruteo por rol ---------- */
+async function doLogin(){
+  const email = document.getElementById('loginEmail').value.trim();
+  const pass = document.getElementById('loginPass').value;
+  const errEl = document.getElementById('loginError');
+  errEl.classList.add('hidden');
+  if(!email || !pass){ errEl.textContent = 'Completá usuario y contraseña.'; errEl.classList.remove('hidden'); return; }
+  const { auth, signInWithEmailAndPassword } = window.__fb;
+  try{
+    await signInWithEmailAndPassword(auth, email, pass);
+    // el resto lo maneja onAuthStateChanged
+  }catch(e){
+    errEl.textContent = 'Usuario o contraseña incorrectos.';
+    errEl.classList.remove('hidden');
+  }
+}
+
+async function routeAfterLogin(user){
+  const { db, doc, getDoc } = window.__fb;
+  const snap = await getDoc(doc(db, 'usuarios', user.uid));
+  if(!snap.exists()){
+    document.getElementById('loginError').textContent = 'Tu usuario no tiene un rol asignado. Pedile al administrador que te habilite.';
+    document.getElementById('loginError').classList.remove('hidden');
+    await window.__fb.signOut(window.__fb.auth);
+    return;
+  }
+  const perfil = snap.data();
+  document.getElementById('gate').classList.add('hidden');
+  if(perfil.role === 'admin'){
+    currentRole = 'admin';
+    document.getElementById('adminView').classList.remove('hidden');
+    document.getElementById('rutaFecha').value = todayStr();
+    await loadClientes();
+    renderClientesTab();
+    renderRutas();
+    renderDashboard();
+    renderEnvases();
+  } else {
+    currentRole = 'driver';
+    currentCamion = perfil.camion;
+    document.getElementById('driverView').classList.remove('hidden');
+    document.getElementById('driverCamionLabel').textContent = perfil.camion || 'Camión';
+    document.getElementById('driverDate').textContent = fmtDate(todayStr());
+    loadDriverRoute();
+  }
+}
+
+function logout(){
+  const { auth, signOut } = window.__fb;
+  signOut(auth).then(()=> location.reload());
+}
+
+window.addEventListener('DOMContentLoaded', ()=>{
+  const tryBind = setInterval(()=>{
+    if(window.__fb && window.__fb.auth){
+      clearInterval(tryBind);
+      window.__fb.onAuthStateChanged(window.__fb.auth, (user)=>{
+        if(user) routeAfterLogin(user);
+      });
+    }
+  }, 100);
+});
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+  ['dashboard','clientes','rutas','envases'].forEach(t=>{
+    document.getElementById('tab-'+t).classList.toggle('hidden', t!==name);
+  });
+  if(name==='dashboard') renderDashboard();
+  if(name==='envases') renderEnvases();
+  if(name==='rutas') renderRutas();
+}
+
+/* =======================================================================
+   CLIENTES
+   ======================================================================= */
+async function loadClientes(){
+  const { db, collection, getDocs } = window.__fb;
+  const snap = await getDocs(collection(db, 'clientes_reparto'));
+  CLIENTES = snap.docs.map(d=>({id:d.id, ...d.data()}));
+  CAMIONES = [...new Set(CLIENTES.map(c=>c.camion).filter(Boolean))].sort();
+}
+
+async function importClientes(){
+  const raw = document.getElementById('csvInput').value.trim();
+  if(!raw){ toast('Pegá el listado primero'); return; }
+  const { db, collection, addDoc } = window.__fb;
+  const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
+  let count = 0;
+  for(const line of lines){
+    const parts = line.split(',').map(p=>p.trim());
+    if(parts.length < 4) continue;
+    const [nombre, direccion, zona, camion] = parts;
+    await addDoc(collection(db, 'clientes_reparto'), { nombre, direccion, zona, camion, activo:true, envaseSaldo:{} });
+    count++;
+  }
+  toast(`${count} clientes importados`);
+  document.getElementById('csvInput').value = '';
+  await loadClientes();
+  renderClientesTab();
+}
+
+function renderClientesTab(){
+  document.getElementById('clientesCount').textContent = `${CLIENTES.length} clientes cargados en ${CAMIONES.length} camiones/zonas`;
+  document.getElementById('clientesTable').innerHTML = CLIENTES.map(c=>`
+    <tr>
+      <td><b>${c.nombre}</b><br><span style="color:var(--ink-soft); font-size:12px;">${c.direccion||''}</span></td>
+      <td>${c.zona||'—'}</td>
+      <td>${c.camion||'—'}</td>
+      <td><button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="eliminarCliente('${c.id}')">Quitar</button></td>
+    </tr>
+  `).join('') || `<tr><td colspan="4" style="color:var(--ink-soft);">Todavía no hay clientes cargados.</td></tr>`;
+}
+
+async function eliminarCliente(id){
+  const { db, doc, deleteDoc } = window.__fb;
+  await deleteDoc(doc(db, 'clientes_reparto', id));
+  await loadClientes();
+  renderClientesTab();
+}
+
+/* =======================================================================
+   ARMAR RUTA DEL DÍA
+   ======================================================================= */
+let rutaSeleccion = new Set();
+
+function renderRutas(){
+  const fecha = document.getElementById('rutaFecha').value || todayStr();
+  const byCamion = {};
+  CLIENTES.forEach(c=>{
+    const cam = c.camion || 'Sin camión';
+    (byCamion[cam] = byCamion[cam]||[]).push(c);
+  });
+  const html = Object.keys(byCamion).sort().map(cam=>`
+    <div class="card">
+      <h2>${cam}</h2>
+      <div class="sub">${byCamion[cam].length} clientes en esta zona/camión</div>
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        ${byCamion[cam].map(c=>`
+          <label style="display:flex; align-items:center; gap:10px; font-size:14px; font-weight:400; color:var(--ink);">
+            <input type="checkbox" value="${c.id}" class="rutaCheck" ${rutaSeleccion.has(c.id)?'checked':''} style="width:18px; height:18px;">
+            ${c.nombre} <span style="color:var(--ink-soft); font-size:12.5px;">— ${c.zona||''}</span>
+          </label>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+  document.getElementById('rutasByCamion').innerHTML = html || `<div class="sub">Cargá clientes en la pestaña "Clientes" primero.</div>`;
+  document.querySelectorAll('.rutaCheck').forEach(chk=>{
+    chk.addEventListener('change', ()=>{
+      chk.checked ? rutaSeleccion.add(chk.value) : rutaSeleccion.delete(chk.value);
+    });
+  });
+}
+
+async function guardarRutaDelDia(){
+  const fecha = document.getElementById('rutaFecha').value || todayStr();
+  if(rutaSeleccion.size === 0){ toast('Marcá al menos un cliente'); return; }
+  const { db, doc, setDoc, collection } = window.__fb;
+  const batchWrites = [];
+  for(const clienteId of rutaSeleccion){
+    const cliente = CLIENTES.find(c=>c.id===clienteId);
+    if(!cliente) continue;
+    const entregaId = `${fecha}_${clienteId}`;
+    batchWrites.push(setDoc(doc(db,'entregas',entregaId), {
+      fecha, clienteId, nombre:cliente.nombre, direccion:cliente.direccion||'',
+      camion:cliente.camion||'Sin camión', zona:cliente.zona||'',
+      estado:'pendiente', formaPago:null, montos:{}, envases:{},
+      observaciones:'', horaEntrega:null
+    }, {merge:true}));
+  }
+  await Promise.all(batchWrites);
+  toast(`Reparto del ${fecha} confirmado: ${rutaSeleccion.size} clientes`);
+  rutaSeleccion.clear();
+  renderDashboard();
+}
+
+/* =======================================================================
+   DASHBOARD (ADMIN)
+   ======================================================================= */
+async function renderDashboard(){
+  const fecha = todayStr();
+  document.getElementById('dashDate').textContent = fmtDate(fecha) + ' — actualiza en vivo';
+  const { db, collection, query, where, onSnapshot } = window.__fb;
+  const q = query(collection(db,'entregas'), where('fecha','==',fecha));
+  onSnapshot(q, (snap)=>{
+    const entregas = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    const total = entregas.length;
+    const hechos = entregas.filter(e=>e.estado==='entregado').length;
+    document.getElementById('dashSummary').innerHTML = `
+      <div style="display:flex; gap:24px; flex-wrap:wrap;">
+        <div><div style="font-size:26px; font-weight:700;">${hechos}/${total}</div><div class="sub" style="margin:0;">entregados</div></div>
+        <div><div style="font-size:26px; font-weight:700;">${total-hechos}</div><div class="sub" style="margin:0;">pendientes</div></div>
+      </div>`;
+    const byCamion = {};
+    entregas.forEach(e=>{ (byCamion[e.camion]=byCamion[e.camion]||[]).push(e); });
+    window.__ENTREGAS_HOY_ADMIN = {};
+    entregas.forEach(e=> window.__ENTREGAS_HOY_ADMIN[e.id] = e);
+    document.getElementById('dashByCamion').innerHTML = Object.keys(byCamion).sort().map(cam=>`
+      <div class="card">
+        <h2>${cam}</h2>
+        <table>
+          <thead><tr><th>Cliente</th><th>Estado</th><th>Pago</th><th>Envases</th><th>Transferencia</th></tr></thead>
+          <tbody>
+            ${byCamion[cam].map(e=>`
+              <tr>
+                <td>${e.nombre}</td>
+                <td><span class="badge ${e.estado==='entregado'?'entregado':'pendiente'}">${e.estado==='entregado'?'Entregado':'Pendiente'}</span></td>
+                <td>${pagoLabel(e)}</td>
+                <td>${envLabel(e)}</td>
+                <td>${anticipoCell(e)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `).join('') || `<div class="sub">Todavía no armaste el reparto de hoy. Andá a "Armar rutas".</div>`;
+  });
+}
+
+function anticipoCell(e){
+  if(e.anticipo){
+    const tipoLabel = e.anticipo.tipo === 'total' ? 'Total' : 'Parcial';
+    return `<span class="badge ok">$${e.anticipo.monto} · ${tipoLabel}</span>`;
+  }
+  if(e.estado === 'entregado') return '—';
+  return `<button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="openAnticipoSheet('${e.id}')">Marcar transferencia</button>`;
+}
+
+function pagoLabel(e){
+  if(e.estado!=='entregado') return '—';
+  if(e.formaPago==='mixto'){
+    const m = e.montos||{};
+    return `Mixto ($${m.efectivo||0} ef / $${m.transferencia||0} tr / $${m.qr||0} qr)`;
+  }
+  const labels = {efectivo:'Efectivo', transferencia:'Transferencia', qr:'QR', no_pago:'No pagó / cta.cte.'};
+  return labels[e.formaPago] || '—';
+}
+function envLabel(e){
+  if(e.estado!=='entregado') return '—';
+  const envases = e.envases || {};
+  const tipos = Object.keys(envases);
+  if(!tipos.length) return '—';
+  return tipos.map(tipo=>{
+    const debe = (envases[tipo].salieron||0) - (envases[tipo].volvieron||0);
+    return debe>0
+      ? `<span class="badge debe">${tipo}: debe ${debe}</span>`
+      : `<span class="badge ok">${tipo}: completo</span>`;
+  }).join(' ');
+}
+
+/* ---------- Marcar transferencia confirmada (admin, antes de que salga el camión) ---------- */
+let anticipoEntregaId = null;
+let anticipoTipo = 'total';
+
+function openAnticipoSheet(entregaId){
+  anticipoEntregaId = entregaId;
+  anticipoTipo = 'total';
+  const e = window.__ENTREGAS_HOY_ADMIN[entregaId];
+  document.getElementById('anticipoClientName').textContent = e.nombre;
+  document.getElementById('anticipoMonto').value = '';
+  document.getElementById('anticipoNota').value = '';
+  document.querySelectorAll('#anticipoPills .pill').forEach(p=>p.classList.toggle('selected', p.dataset.tipo==='total'));
+  document.getElementById('anticipoOverlay').classList.remove('hidden');
+}
+function closeAnticipoSheet(){
+  document.getElementById('anticipoOverlay').classList.add('hidden');
+  anticipoEntregaId = null;
+}
+function selectAnticipoTipo(tipo){
+  anticipoTipo = tipo;
+  document.querySelectorAll('#anticipoPills .pill').forEach(p=>p.classList.toggle('selected', p.dataset.tipo===tipo));
+}
+async function guardarAnticipo(){
+  const monto = parseFloat(document.getElementById('anticipoMonto').value);
+  if(!monto || monto<=0){ toast('Cargá el monto transferido'); return; }
+  const nota = document.getElementById('anticipoNota').value.trim();
+  const { db, doc, updateDoc } = window.__fb;
+  await updateDoc(doc(db,'entregas',anticipoEntregaId), {
+    anticipo: { monto, tipo: anticipoTipo, nota, marcadoEn: new Date().toISOString() }
+  });
+  toast('Transferencia marcada — el chofer ya la va a ver en su lista');
+  closeAnticipoSheet();
+}
+
+/* =======================================================================
+   ENVASES — CUENTA CORRIENTE Y CONSOLIDADO POR CAMIÓN
+   ======================================================================= */
+async function renderEnvases(){
+  await loadClientes();
+  const saldoTotal = c => Object.values(c.envaseSaldo||{}).reduce((a,b)=>a+b,0);
+  document.getElementById('envasesTable').innerHTML = CLIENTES
+    .slice()
+    .sort((a,b)=> saldoTotal(b) - saldoTotal(a))
+    .map(c=>{
+      const saldo = c.envaseSaldo || {};
+      const badges = TIPOS_ENVASE
+        .filter(t => saldo[t])
+        .map(t => `<span class="badge ${saldo[t]>0?'debe':'ok'}">${t}: ${saldo[t]}</span>`)
+        .join(' ');
+      return `
+        <tr>
+          <td>${c.nombre}</td>
+          <td>${c.zona||'—'}</td>
+          <td>${badges || `<span class="badge ok">Al día</span>`}</td>
+        </tr>`;
+    }).join('') || `<tr><td colspan="3" style="color:var(--ink-soft);">Sin datos todavía.</td></tr>`;
+  renderConsolidado();
+}
+
+async function renderConsolidado(){
+  const fecha = todayStr();
+  const { db, collection, query, where, onSnapshot, doc, getDoc, setDoc } = window.__fb;
+  const cargas = {};
+  for(const camion of CAMIONES){
+    const snap = await getDoc(doc(db,'cargas_camion', `${fecha}_${camion}`));
+    cargas[camion] = snap.exists() ? snap.data() : {};
+  }
+  const q = query(collection(db,'entregas'), where('fecha','==',fecha));
+  onSnapshot(q, (snap)=>{
+    const entregas = snap.docs.map(d=>d.data());
+    const byCamion = {};
+    entregas.forEach(e=>{
+      const cam = e.camion;
+      byCamion[cam] = byCamion[cam] || {};
+      const envases = e.envases || {};
+      Object.keys(envases).forEach(tipo=>{
+        byCamion[cam][tipo] = byCamion[cam][tipo] || {entregado:0, recuperado:0};
+        byCamion[cam][tipo].entregado += envases[tipo].salieron||0;
+        byCamion[cam][tipo].recuperado += envases[tipo].volvieron||0;
+      });
+    });
+    document.getElementById('consolidadoCamiones').innerHTML = CAMIONES.map(camion=>{
+      const datos = byCamion[camion] || {};
+      const cargaCamion = cargas[camion] || {};
+      return `
+        <div style="border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px;">
+          <div style="font-weight:700; margin-bottom:10px;">${camion}</div>
+          <table>
+            <thead><tr><th>Producto</th><th>Salió depósito</th><th>Entregado</th><th>Recuperado</th><th>Debería volver</th></tr></thead>
+            <tbody>
+            ${TIPOS_ENVASE.map(tipo=>{
+              const d = datos[tipo] || {entregado:0, recuperado:0};
+              const cargaInicial = cargaCamion[tipo] ?? '';
+              const debeVolver = (cargaCamion[tipo]||0) - d.entregado + d.recuperado;
+              return `
+                <tr>
+                  <td>${tipo}</td>
+                  <td><input type="number" value="${cargaInicial}" style="width:70px; padding:5px 6px;" onchange="guardarCargaInicial('${camion}','${tipo}', this.value)"></td>
+                  <td>${d.entregado}</td>
+                  <td>${d.recuperado}</td>
+                  <td><b>${debeVolver}</b></td>
+                </tr>`;
+            }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }).join('') || `<div class="sub">Cargá clientes con camión asignado primero.</div>`;
+  });
+}
+
+async function guardarCargaInicial(camion, tipo, valor){
+  const fecha = todayStr();
+  const { db, doc, setDoc } = window.__fb;
+  await setDoc(doc(db,'cargas_camion', `${fecha}_${camion}`), { [tipo]: parseInt(valor)||0 }, {merge:true});
+  toast('Carga inicial guardada');
+}
+
+/* =======================================================================
+   VISTA CHOFER
+   ======================================================================= */
+function loadDriverRoute(){
+  const fecha = todayStr();
+  const { db, collection, query, where, onSnapshot } = window.__fb;
+  const q = query(collection(db,'entregas'), where('fecha','==',fecha), where('camion','==',currentCamion));
+  onSnapshot(q, (snap)=>{
+    const entregas = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    entregas.forEach(e=> ENTREGAS_HOY[e.clienteId] = e);
+    const total = entregas.length;
+    const hechos = entregas.filter(e=>e.estado==='entregado').length;
+    document.getElementById('progressFill').style.width = total? `${(hechos/total)*100}%` : '0%';
+    document.getElementById('progressText').textContent = `${hechos} de ${total} entregados`;
+    document.getElementById('driverEmpty').classList.toggle('hidden', total>0);
+    // pendientes primero
+    const ordenados = entregas.slice().sort((a,b)=>(a.estado==='entregado')-(b.estado==='entregado'));
+    document.getElementById('stopsList').innerHTML = ordenados.map(e=>`
+      <div class="stop ${e.estado==='entregado'?'entregado':''}" onclick="openSheet('${e.clienteId}')">
+        <div class="info">
+          <div class="name">${e.nombre}</div>
+          <div class="meta">${e.direccion||''} ${e.estado==='entregado'? '· '+pagoLabel(e) : ''}</div>
+          ${e.anticipo ? `<div style="margin-top:6px;"><span class="badge ok">Ya transfirió $${e.anticipo.monto} · ${e.anticipo.tipo==='total'?'Total':'Parcial'}</span></div>` : ''}
+        </div>
+        <div class="chev">${e.estado==='entregado' ? '✓' : '›'}</div>
+      </div>
+    `).join('');
+  });
+}
+
+/* ---------- Modal de entrega ---------- */
+function openSheet(clienteId){
+  activeClienteId = clienteId;
+  selectedPago = null;
+  const e = ENTREGAS_HOY[clienteId];
+  document.getElementById('sheetClientName').textContent = e.nombre;
+  document.getElementById('sheetClientAddr').textContent = e.direccion || '';
+  document.querySelectorAll('#pagoPills .pill').forEach(p=>p.classList.remove('selected'));
+  document.getElementById('mixtoFields').classList.add('hidden');
+  document.getElementById('montoEfectivo').value = '';
+  document.getElementById('montoTransferencia').value = '';
+  document.getElementById('montoQR').value = '';
+  document.getElementById('envaseInputs').innerHTML = TIPOS_ENVASE.map((tipo, i)=>`
+    <div class="row" style="align-items:flex-end; margin-bottom:8px;">
+      <div style="flex:1.3;"><label style="margin-bottom:2px; font-weight:700; color:var(--ink);">${tipo}</label></div>
+      <div><label style="margin-bottom:2px;">Salieron</label><input type="number" id="env_sal_${i}" placeholder="0"></div>
+      <div><label style="margin-bottom:2px;">Volvieron</label><input type="number" id="env_vol_${i}" placeholder="0"></div>
+    </div>
+  `).join('');
+  const envPrev = e.envases || {};
+  TIPOS_ENVASE.forEach((tipo, i)=>{
+    document.getElementById(`env_sal_${i}`).value = envPrev[tipo]?.salieron || '';
+    document.getElementById(`env_vol_${i}`).value = envPrev[tipo]?.volvieron || '';
+  });
+  document.getElementById('obsInput').value = e.observaciones || '';
+
+  const banner = document.getElementById('anticipoBanner');
+  if(e.anticipo){
+    const tipoTxt = e.anticipo.tipo === 'total' ? 'Ya transfirió el total' : 'Ya transfirió una parte';
+    banner.innerHTML = `${tipoTxt}: $${e.anticipo.monto}${e.anticipo.nota ? ' — '+e.anticipo.nota : ''}`;
+    banner.classList.remove('hidden');
+    if(e.anticipo.tipo === 'total'){
+      selectPago('transferencia');
+    } else {
+      selectPago('mixto');
+      document.getElementById('montoTransferencia').value = e.anticipo.monto;
+    }
+  } else {
+    banner.classList.add('hidden');
+  }
+
+  document.getElementById('deliveryOverlay').classList.remove('hidden');
+}
+function closeSheet(){
+  document.getElementById('deliveryOverlay').classList.add('hidden');
+  activeClienteId = null;
+}
+function selectPago(tipo){
+  selectedPago = tipo;
+  document.querySelectorAll('#pagoPills .pill').forEach(p=>p.classList.toggle('selected', p.dataset.pago===tipo));
+  document.getElementById('mixtoFields').classList.toggle('hidden', tipo!=='mixto');
+}
+async function confirmarEntrega(){
+  if(!selectedPago){ toast('Elegí una forma de pago'); return; }
+  const fecha = todayStr();
+  const envases = {};
+  TIPOS_ENVASE.forEach((tipo, i)=>{
+    const salieron = parseInt(document.getElementById(`env_sal_${i}`).value)||0;
+    const volvieron = parseInt(document.getElementById(`env_vol_${i}`).value)||0;
+    if(salieron || volvieron) envases[tipo] = { salieron, volvieron };
+  });
+  const montos = selectedPago==='mixto' ? {
+    efectivo: parseFloat(document.getElementById('montoEfectivo').value)||0,
+    transferencia: parseFloat(document.getElementById('montoTransferencia').value)||0,
+    qr: parseFloat(document.getElementById('montoQR').value)||0
+  } : {};
+  const observaciones = document.getElementById('obsInput').value.trim();
+
+  const { db, doc, updateDoc, runTransaction } = window.__fb;
+  const entregaId = `${fecha}_${activeClienteId}`;
+  await updateDoc(doc(db,'entregas',entregaId), {
+    estado:'entregado', formaPago:selectedPago, montos, envases,
+    observaciones, horaEntrega: new Date().toISOString()
+  });
+
+  // Actualiza saldo de envases del cliente (cuenta corriente), un saldo por tipo de producto
+  const tiposConMovimiento = Object.keys(envases).filter(t => (envases[t].salieron - envases[t].volvieron) !== 0);
+  if(tiposConMovimiento.length){
+    const clienteRef = doc(db,'clientes_reparto', activeClienteId);
+    await runTransaction(db, async (tx)=>{
+      const snap = await tx.get(clienteRef);
+      const saldoActual = snap.exists() ? (snap.data().envaseSaldo||{}) : {};
+      const nuevoSaldo = {...saldoActual};
+      tiposConMovimiento.forEach(tipo=>{
+        const diff = envases[tipo].salieron - envases[tipo].volvieron;
+        nuevoSaldo[tipo] = (nuevoSaldo[tipo]||0) + diff;
+      });
+      tx.update(clienteRef, { envaseSaldo: nuevoSaldo });
+    });
+  }
+  toast('Entrega registrada');
+  closeSheet();
+}
+
+// exponer funciones usadas en HTML inline
+Object.assign(window, {
+  doLogin, logout, switchTab,
+  importClientes, eliminarCliente, renderRutas, guardarRutaDelDia,
+  openSheet, closeSheet, selectPago, confirmarEntrega,
+  openAnticipoSheet, closeAnticipoSheet, selectAnticipoTipo, guardarAnticipo,
+  guardarCargaInicial
+});
+</script>
+</body>
+</html>
