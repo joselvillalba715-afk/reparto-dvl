@@ -211,7 +211,9 @@
       </div>
       <div class="card">
         <h2>Reparto de hoy</h2>
+        <div class="sub">Por cada cliente: camión, N° de viaje, monto de la boleta, y cajones del pedido (Coca-Cola / Cerveza).</div>
         <div class="sub" id="rutaSeleccionCount"></div>
+        <div class="sub" id="rutaResumenCajones" style="font-weight:600; color:var(--ink);"></div>
         <div id="rutaSeleccionados"></div>
         <button class="btn btn-primary" style="margin-top:10px;" onclick="guardarRutaDelDia()">Confirmar reparto del día</button>
       </div>
@@ -226,7 +228,17 @@
       </div>
       <div class="card">
         <h2>Cuenta corriente de envases por cliente</h2>
-        <div class="sub">Saldo acumulado de cajones retornables que cada cliente tiene pendiente de devolver, por producto.</div>
+        <div class="sub">Saldo acumulado de cajones retornables que cada cliente tiene pendiente de devolver, por producto. Ordenado de mayor a menor deuda.</div>
+        <div class="row" style="align-items:flex-end; margin-bottom:6px;">
+          <div class="field" style="margin-bottom:0;">
+            <label>Buscar</label>
+            <input type="text" id="envasesSearch" placeholder="Nombre o número..." oninput="renderEnvasesTabla()">
+          </div>
+          <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:400; padding-bottom:9px;">
+            <input type="checkbox" id="envasesSoloDeuda" checked onchange="renderEnvasesTabla()" style="width:18px; height:18px;">
+            Mostrar solo con deuda pendiente
+          </label>
+        </div>
         <table>
           <thead><tr><th>N°</th><th>Cliente</th><th>Saldo pendiente</th></tr></thead>
           <tbody id="envasesTable"></tbody>
@@ -648,6 +660,7 @@ let rutaSeleccion = new Set();
 let selectedCamion = {}; // { clienteId: 'Camion 2' } — camión elegido para hoy
 let selectedViaje = {};  // { clienteId: 1 } — n° de viaje/reparto de hoy
 let selectedMontoBoleta = {}; // { clienteId: 15000 } — monto de la boleta cargado al armar la ruta
+let selectedEnvasesPedido = {}; // { clienteId: { 'Coca-Cola': 4, 'Cerveza': 2 } } — cajones del pedido de cada cliente
 
 function renderRutas(){
   renderBusquedaRutas();
@@ -690,6 +703,7 @@ function renderSeleccionados(){
   el.innerHTML = seleccionados.map(c=>{
     if(!selectedCamion[c.id]) selectedCamion[c.id] = opcionesCamion[0];
     if(!selectedViaje[c.id]) selectedViaje[c.id] = 1;
+    if(!selectedEnvasesPedido[c.id]) selectedEnvasesPedido[c.id] = {};
     return `
     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:9px 0; border-bottom:1px solid #ece9df;">
       <div style="flex:1; min-width:160px; font-size:14px;"><b>${c.nombre}</b><br><span style="color:var(--ink-soft); font-size:12px;">${c.direccion||''}</span></div>
@@ -698,6 +712,9 @@ function renderSeleccionados(){
       </select>
       <input type="number" min="1" class="viajeInputRow" data-cliente="${c.id}" value="${selectedViaje[c.id]}" title="N° de viaje" style="width:56px; font-size:12.5px; padding:6px 8px;">
       <input type="number" min="0" class="boletaInputRow" data-cliente="${c.id}" value="${selectedMontoBoleta[c.id] || ''}" placeholder="$ boleta" title="Monto de la boleta" style="width:90px; font-size:12.5px; padding:6px 8px;">
+      ${TIPOS_ENVASE.map(tipo=>`
+        <input type="number" min="0" class="envasePedidoInputRow" data-cliente="${c.id}" data-tipo="${tipo}" value="${selectedEnvasesPedido[c.id][tipo] || ''}" placeholder="0" title="Cajones de ${tipo} en el pedido" style="width:60px; font-size:12.5px; padding:6px 8px;">
+      `).join('')}
       <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="quitarDeRuta('${c.id}')">Quitar</button>
     </div>`;
   }).join('') || `<div class="sub">Todavía no agregaste clientes. Buscalos arriba.</div>`;
@@ -711,6 +728,32 @@ function renderSeleccionados(){
   document.querySelectorAll('.boletaInputRow').forEach(inp=>{
     inp.addEventListener('change', ()=>{ selectedMontoBoleta[inp.dataset.cliente] = parseFloat(inp.value) || 0; });
   });
+  document.querySelectorAll('.envasePedidoInputRow').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const cid = inp.dataset.cliente, tipo = inp.dataset.tipo;
+      if(!selectedEnvasesPedido[cid]) selectedEnvasesPedido[cid] = {};
+      selectedEnvasesPedido[cid][tipo] = parseInt(inp.value) || 0;
+      renderResumenCajonesRuta();
+    });
+  });
+  renderResumenCajonesRuta();
+}
+
+function renderResumenCajonesRuta(){
+  const el = document.getElementById('rutaResumenCajones');
+  if(!el) return;
+  const totales = {};
+  TIPOS_ENVASE.forEach(t => totales[t] = 0);
+  rutaSeleccion.forEach(cid => {
+    const pedido = selectedEnvasesPedido[cid] || {};
+    TIPOS_ENVASE.forEach(t => totales[t] += (pedido[t] || 0));
+  });
+  const totalGeneral = Object.values(totales).reduce((a,b)=>a+b,0);
+  if(!totalGeneral){
+    el.textContent = '';
+    return;
+  }
+  el.textContent = 'Cajones en este reparto: ' + TIPOS_ENVASE.map(t => `${t}: ${totales[t]}`).join(' · ');
 }
 
 function quitarDeRuta(clienteId){
@@ -730,17 +773,24 @@ async function guardarRutaDelDia(){
     const camion = selectedCamion[clienteId] || CAMIONES[0];
     const viaje = selectedViaje[clienteId] || 1;
     const montoBoleta = selectedMontoBoleta[clienteId] || 0;
+    const pedido = selectedEnvasesPedido[clienteId] || {};
+    const envases = {};
+    TIPOS_ENVASE.forEach(tipo => {
+      if(pedido[tipo]) envases[tipo] = { salieron: pedido[tipo], volvieron: 0 };
+    });
     const entregaId = `${fecha}_${clienteId}_v${viaje}`;
     batchWrites.push(setDoc(doc(db,'entregas',entregaId), {
       fecha, viaje, clienteId, nombre:cliente.nombre, direccion:cliente.direccion||'',
       numero:cliente.numero||'', telefono:cliente.telefono||'', camion, montoBoleta,
-      estado:'pendiente', formaPago:null, montos:{}, envases:{},
+      estado:'pendiente', formaPago:null, montos:{}, envases,
+      envaseSaldoAlSalir: cliente.envaseSaldo || {},
       observaciones:'', horaEntrega:null
     }, {merge:true}));
   }
   await Promise.all(batchWrites);
   toast(`Reparto del ${fecha} confirmado: ${rutaSeleccion.size} clientes`);
   rutaSeleccion.clear();
+  selectedEnvasesPedido = {};
   renderDashboard();
   renderRutas();
 }
@@ -861,32 +911,52 @@ async function guardarAnticipo(){
 /* =======================================================================
    ENVASES — CUENTA CORRIENTE Y CONSOLIDADO POR CAMIÓN
    ======================================================================= */
+function saldoTotalCliente(c){
+  return Object.values(c.envaseSaldo||{}).reduce((a,b)=>a+b,0);
+}
+function fmtFechaCorta(iso){
+  if(!iso) return '';
+  const [y,m,d] = iso.split('-');
+  return `${d}/${m}`;
+}
+
 async function renderEnvases(){
   await loadClientes();
-  const saldoTotal = c => Object.values(c.envaseSaldo||{}).reduce((a,b)=>a+b,0);
-  const fmtFechaCorta = (iso) => {
-    if(!iso) return '';
-    const [y,m,d] = iso.split('-');
-    return `${d}/${m}`;
-  };
-  document.getElementById('envasesTable').innerHTML = CLIENTES
-    .slice()
-    .sort((a,b)=> saldoTotal(b) - saldoTotal(a))
-    .map(c=>{
-      const saldo = c.envaseSaldo || {};
-      const debeDesde = c.envaseDebeDesde || {};
-      const badges = TIPOS_ENVASE
-        .filter(t => saldo[t])
-        .map(t => `<span class="badge ${saldo[t]>0?'debe':'ok'}">${t}: ${saldo[t]}${saldo[t]>0 && debeDesde[t] ? ' (desde '+fmtFechaCorta(debeDesde[t])+')' : ''}</span>`)
-        .join(' ');
-      return `
-        <tr>
-          <td>${c.numero||'—'}</td>
-          <td>${c.nombre}</td>
-          <td>${badges || `<span class="badge ok">Al día</span>`}</td>
-        </tr>`;
-    }).join('') || `<tr><td colspan="3" style="color:var(--ink-soft);">Sin datos todavía.</td></tr>`;
+  renderEnvasesTabla();
   renderConsolidado();
+}
+
+function renderEnvasesTabla(){
+  const tbody = document.getElementById('envasesTable');
+  if(!tbody) return;
+  const q = (document.getElementById('envasesSearch')?.value || '').trim().toLowerCase();
+  const soloDeuda = document.getElementById('envasesSoloDeuda')?.checked ?? true;
+
+  let lista = CLIENTES.slice().sort((a,b)=> saldoTotalCliente(b) - saldoTotalCliente(a));
+  if(soloDeuda) lista = lista.filter(c => saldoTotalCliente(c) > 0);
+  if(q) lista = lista.filter(c =>
+    (c.nombre||'').toLowerCase().includes(q) || (c.numero||'').toLowerCase().includes(q)
+  );
+
+  const mostrar = lista.slice(0, 200);
+  tbody.innerHTML = mostrar.map(c=>{
+    const saldo = c.envaseSaldo || {};
+    const debeDesde = c.envaseDebeDesde || {};
+    const badges = TIPOS_ENVASE
+      .filter(t => saldo[t])
+      .map(t => `<span class="badge ${saldo[t]>0?'debe':'ok'}">${t}: ${saldo[t]}${saldo[t]>0 && debeDesde[t] ? ' (desde '+fmtFechaCorta(debeDesde[t])+')' : ''}</span>`)
+      .join(' ');
+    return `
+      <tr>
+        <td>${c.numero||'—'}</td>
+        <td>${c.nombre}</td>
+        <td>${badges || `<span class="badge ok">Al día</span>`}</td>
+      </tr>`;
+  }).join('') || `<tr><td colspan="3" style="color:var(--ink-soft);">${soloDeuda ? 'Ningún cliente debe cajones en este momento.' : 'Sin resultados.'}</td></tr>`;
+
+  if(lista.length > 200){
+    tbody.innerHTML += `<tr><td colspan="3" style="color:var(--ink-soft); font-size:12.5px;">Mostrando 200 de ${lista.length} — usá el buscador para acotar.</td></tr>`;
+  }
 }
 
 function calcularProgreso(clientes){
@@ -1108,10 +1178,14 @@ function llenarSheet(e){
   document.getElementById('envaseInputs').innerHTML = TIPOS_ENVASE.map((tipo, i)=>`
     <div class="row" style="align-items:flex-end; margin-bottom:8px;">
       <div style="flex:1.3;"><label style="margin-bottom:2px; font-weight:700; color:var(--ink);">${tipo}</label></div>
-      <div><label style="margin-bottom:2px;">Salieron</label><input type="number" id="env_sal_${i}" placeholder="0"></div>
+      <div><label style="margin-bottom:2px;">Salieron</label><input type="number" id="env_sal_${i}" placeholder="0" ${editandoDesdeAdmin ? '' : 'readonly style="background:#f0efe9; color:var(--ink-soft);"'}></div>
       <div><label style="margin-bottom:2px;">Volvieron</label><input type="number" id="env_vol_${i}" placeholder="0"></div>
     </div>
   `).join('');
+  if(!editandoDesdeAdmin){
+    document.getElementById('envaseInputs').insertAdjacentHTML('afterbegin',
+      `<div class="sub" style="margin-bottom:8px;">"Salieron" lo carga administración al armar la ruta y no se puede editar acá — si está mal, avisale al admin. Vos solo cargás cuántos "Volvieron".</div>`);
+  }
   const envPrev = e.envases || {};
   TIPOS_ENVASE.forEach((tipo, i)=>{
     document.getElementById(`env_sal_${i}`).value = envPrev[tipo]?.salieron || '';
@@ -1120,9 +1194,21 @@ function llenarSheet(e){
   document.getElementById('obsInput').value = e.observaciones || '';
 
   const banner = document.getElementById('anticipoBanner');
+  const deudaPrevia = e.envaseSaldoAlSalir || {};
+  const deudaTexto = TIPOS_ENVASE
+    .filter(t => (deudaPrevia[t] || 0) > 0)
+    .map(t => `${t}: ${deudaPrevia[t]}`)
+    .join(' · ');
+  const avisos = [];
   if(e.anticipo){
     const tipoTxt = e.anticipo.tipo === 'total' ? 'Ya transfirió el total' : 'Ya transfirió una parte';
-    banner.innerHTML = `${tipoTxt}: $${e.anticipo.monto}${e.anticipo.nota ? ' — '+e.anticipo.nota : ''}`;
+    avisos.push(`${tipoTxt}: $${e.anticipo.monto}${e.anticipo.nota ? ' — '+e.anticipo.nota : ''}`);
+  }
+  if(deudaTexto){
+    avisos.push(`Este cliente debe devolver: ${deudaTexto}`);
+  }
+  if(avisos.length){
+    banner.innerHTML = avisos.join('<br>');
     banner.classList.remove('hidden');
   } else {
     banner.classList.add('hidden');
@@ -1216,7 +1302,7 @@ Object.assign(window, {
   importClientes, eliminarCliente, borrarTodosClientes, renderRutas, renderBusquedaRutas, quitarDeRuta, guardarRutaDelDia,
   openSheet, openSheetAdmin, closeSheet, selectPago, confirmarEntrega,
   openAnticipoSheet, closeAnticipoSheet, selectAnticipoTipo, guardarAnticipo,
-  guardarCargaInicial, eliminarViaje, quitarClienteDeViaje, renderClientesTab
+  guardarCargaInicial, eliminarViaje, quitarClienteDeViaje, renderClientesTab, renderEnvasesTabla
 });
 </script>
 </body>
