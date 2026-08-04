@@ -948,13 +948,14 @@ async function renderDashboard(){
       <div class="card">
         <h2>${grupo}</h2>
         <table>
-          <thead><tr><th>Cliente</th><th>Estado</th><th>Boleta</th><th>Pago</th><th>Envases</th><th>Transferencia</th><th></th></tr></thead>
+          <thead><tr><th>Cliente</th><th>Estado</th><th>Boleta</th><th>Total cobrado</th><th>Pago</th><th>Envases</th><th>Transferencia</th><th></th></tr></thead>
           <tbody>
             ${byGrupo[grupo].map(e=>`
               <tr>
                 <td>${e.nombre}</td>
                 <td><span class="badge ${e.estado==='entregado'?'entregado':'pendiente'}">${e.estado==='entregado'?'Entregado':'Pendiente'}</span></td>
                 <td>${e.montoBoleta ? '$'+e.montoBoleta : '—'}</td>
+                <td>${e.estado==='entregado' ? '$'+(e.totalCobrado ?? e.montoBoleta ?? 0) : '—'}</td>
                 <td>${pagoLabel(e)}</td>
                 <td>${envLabel(e)}</td>
                 <td>${anticipoCell(e)}</td>
@@ -1180,12 +1181,13 @@ function calcularDesglosePago(clientes){
   const totales = { efectivo:0, transferencia:0, qr:0 };
   clientes.forEach(e=>{
     if(e.estado !== 'entregado') return;
+    const totalReal = e.totalCobrado ?? e.montoBoleta ?? 0;
     if(e.formaPago === 'mixto'){
       totales.efectivo += (e.montos?.efectivo || 0);
       totales.transferencia += (e.montos?.transferencia || 0);
       totales.qr += (e.montos?.qr || 0);
     } else if(e.formaPago === 'efectivo' || e.formaPago === 'transferencia' || e.formaPago === 'qr'){
-      totales[e.formaPago] += (e.montoBoleta || 0);
+      totales[e.formaPago] += totalReal;
     }
     // 'no_pago' no suma a ningún medio
   });
@@ -1202,9 +1204,10 @@ async function renderConsolidado(){
     entregas.forEach(e=>{
       const viaje = e.viaje || 1;
       const key = `${e.camion}||${viaje}`;
-      byGrupo[key] = byGrupo[key] || { camion:e.camion, viaje, tipos:{}, clientes:[], totalBoleta:0 };
+      byGrupo[key] = byGrupo[key] || { camion:e.camion, viaje, tipos:{}, clientes:[], totalBoleta:0, totalCobrado:0 };
       byGrupo[key].clientes.push(e);
       byGrupo[key].totalBoleta += (e.montoBoleta || 0);
+      if(e.estado === 'entregado') byGrupo[key].totalCobrado += (e.totalCobrado ?? e.montoBoleta ?? 0);
       const envases = e.envases || {};
       Object.keys(envases).forEach(tipo=>{
         byGrupo[key].tipos[tipo] = byGrupo[key].tipos[tipo] || {entregado:0, recuperado:0, vendidoBotellas:0};
@@ -1225,61 +1228,76 @@ async function renderConsolidado(){
       const progreso = calcularProgreso(g.clientes);
       const pagos = calcularDesglosePago(g.clientes);
       return `
-        <div style="border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px;">
-          <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+        <details class="viaje-consolidado-card" style="border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px;" open>
+          <summary style="cursor:pointer; list-style:none; display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px;">
             <div>
-              <div style="font-weight:700;">${g.camion} · Viaje ${g.viaje}</div>
-              <div class="sub" style="margin:2px 0 0;">${g.clientes.length} clientes · $${g.totalBoleta.toLocaleString('es-AR')} en boletas cargadas</div>
+              <div style="font-weight:700;">${g.camion} · Viaje ${g.viaje} <span class="sub" style="font-weight:400;">(${progreso.completados}/${g.clientes.length} · ${progreso.pct}%)</span></div>
+              <div class="sub" style="margin:2px 0 0;">${g.clientes.length} clientes · $${g.totalBoleta.toLocaleString('es-AR')} en boletas cargadas · $${g.totalCobrado.toLocaleString('es-AR')} cobrado hasta ahora</div>
               <div class="sub" style="margin:2px 0 0;">Efectivo: $${pagos.efectivo.toLocaleString('es-AR')} · Transferencia: $${pagos.transferencia.toLocaleString('es-AR')} · QR: $${pagos.qr.toLocaleString('es-AR')}</div>
             </div>
-            <button class="btn btn-ghost" style="color:var(--red); border-color:var(--red); padding:6px 12px; font-size:12px;" onclick="eliminarViaje('${g.camion}', ${g.viaje})">Eliminar viaje</button>
-          </div>
-          <div class="progress-bar" style="margin:10px 0 6px;"><div class="fill" style="width:${progreso.pct}%"></div></div>
-          <div class="sub" style="margin:0 0 12px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:6px;">
-            <span>${progreso.completados} de ${g.clientes.length} entregados</span>
-            <span>${progreso.mensajeRegreso}</span>
-          </div>
-          <table>
-            <thead><tr><th>Producto</th><th>Salió depósito</th><th>Prestado</th><th>Devuelto</th><th>Vendido (botellas)</th><th>Debería volver</th></tr></thead>
-            <tbody>
+          </summary>
+          <div style="margin-top:12px;">
+            <div style="display:flex; justify-content:flex-end; margin-bottom:8px;">
+              <button class="btn btn-ghost" style="color:var(--red); border-color:var(--red); padding:6px 12px; font-size:12px;" onclick="event.preventDefault(); eliminarViaje('${g.camion}', ${g.viaje})">Eliminar viaje</button>
+            </div>
+            <div class="progress-bar" style="margin:0 0 6px;"><div class="fill" style="width:${progreso.pct}%"></div></div>
+            <div class="sub" style="margin:0 0 12px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:6px;">
+              <span>${progreso.completados} de ${g.clientes.length} entregados</span>
+              <span>${progreso.mensajeRegreso}</span>
+            </div>
             ${TIPOS_ENVASE.map(tipo=>{
               const d = g.tipos[tipo] || {entregado:0, recuperado:0, vendidoBotellas:0};
               const cargaInicial = cargaCamion[tipo] ?? '';
               const debeVolver = (cargaCamion[tipo]||0) - d.entregado + d.recuperado;
               return `
-                <tr>
-                  <td>${tipo}</td>
-                  <td>
-                    <input type="number" step="0.5" value="${cargaInicial}" style="width:70px; padding:5px 6px;" onchange="guardarCargaInicial('${g.camion}',${g.viaje},'${tipo}', this.value)">
-                    ${cargaInicial !== '' ? `<div class="sub" style="font-size:10.5px; margin-top:2px;">${formatCajones(tipo, cargaInicial)}</div>` : ''}
-                  </td>
-                  <td>${formatCajones(tipo, d.entregado)}</td>
-                  <td>${formatCajones(tipo, d.recuperado)}</td>
-                  <td>${d.vendidoBotellas ? `${d.vendidoBotellas} botellas` : '—'}</td>
-                  <td><b>${formatCajones(tipo, debeVolver)}</b></td>
-                </tr>`;
+              <div style="border:1px solid var(--line); border-radius:8px; padding:10px; margin-bottom:8px;">
+                <div style="font-weight:700; margin-bottom:8px;">${tipo}</div>
+                <div style="display:flex; flex-wrap:wrap; gap:14px;">
+                  <div>
+                    <span style="font-size:10px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.03em; font-weight:600; display:block; margin-bottom:3px;">Salió depósito</span>
+                    <input type="number" step="0.5" value="${cargaInicial}" style="width:80px;" onchange="guardarCargaInicial('${g.camion}',${g.viaje},'${tipo}', this.value)">
+                    ${cargaInicial !== '' ? `<span class="sub" style="font-size:10.5px; display:block; margin-top:2px;">${formatCajones(tipo, cargaInicial)}</span>` : ''}
+                  </div>
+                  <div>
+                    <span style="font-size:10px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.03em; font-weight:600; display:block; margin-bottom:3px;">Prestado</span>
+                    <span style="font-size:14px;">${formatCajones(tipo, d.entregado)}</span>
+                  </div>
+                  <div>
+                    <span style="font-size:10px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.03em; font-weight:600; display:block; margin-bottom:3px;">Devuelto</span>
+                    <span style="font-size:14px;">${formatCajones(tipo, d.recuperado)}</span>
+                  </div>
+                  <div>
+                    <span style="font-size:10px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.03em; font-weight:600; display:block; margin-bottom:3px;">Vendido</span>
+                    <span style="font-size:14px;">${d.vendidoBotellas ? d.vendidoBotellas+' botellas' : '—'}</span>
+                  </div>
+                  <div>
+                    <span style="font-size:10px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.03em; font-weight:600; display:block; margin-bottom:3px;">Debería volver</span>
+                    <span style="font-size:14px; font-weight:700;">${formatCajones(tipo, debeVolver)}</span>
+                  </div>
+                </div>
+              </div>`;
             }).join('')}
-            </tbody>
-          </table>
-          <div class="sub" style="margin-top:6px; font-size:11.5px;">"Vendido" son botellas sueltas que el cliente no tenía para devolver y se le cobraron — no vuelven físicamente al depósito, por eso no suman en "Debería volver".</div>
-          <details style="margin-top:10px;">
-            <summary style="cursor:pointer; font-size:12.5px; color:var(--ink-soft); font-weight:600;">Ver / modificar clientes de este viaje (${g.clientes.length})</summary>
-            <table style="margin-top:8px;">
-              <thead><tr><th>Cliente</th><th>Estado</th><th>Boleta</th><th></th><th></th></tr></thead>
-              <tbody>
-                ${g.clientes.map(c=>`
-                  <tr>
-                    <td>${c.nombre}</td>
-                    <td><span class="badge ${c.estado==='entregado'?'entregado':'pendiente'}">${c.estado==='entregado'?'Entregado':'Pendiente'}</span></td>
-                    <td>${c.montoBoleta ? '$'+c.montoBoleta : '—'}</td>
-                    <td><button class="btn btn-ghost" style="padding:4px 8px; font-size:11.5px;" onclick="openEditarBoletaSheet('${c.id}','${(c.nombre||'').replace(/'/g,"\\'")}', ${c.montoBoleta||0})">Editar boleta</button></td>
-                    <td><button class="btn btn-ghost" style="padding:4px 8px; font-size:11.5px;" onclick="quitarClienteDeViaje('${c.id}','${c.nombre.replace(/'/g,"\\'")}')">Quitar</button></td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </details>
-        </div>
+            <div class="sub" style="margin:4px 0 12px; font-size:11.5px;">"Vendido" son botellas sueltas que el cliente no tenía para devolver y se le cobraron — no vuelven físicamente al depósito, por eso no suman en "Debería volver".</div>
+            <details style="margin-top:4px;">
+              <summary style="cursor:pointer; font-size:12.5px; color:var(--ink-soft); font-weight:600;">Ver / modificar clientes de este viaje (${g.clientes.length})</summary>
+              <table style="margin-top:8px;">
+                <thead><tr><th>Cliente</th><th>Estado</th><th>Boleta</th><th>Cobrado</th><th></th><th></th></tr></thead>
+                <tbody>
+                  ${g.clientes.map(c=>`
+                    <tr>
+                      <td>${c.nombre}</td>
+                      <td><span class="badge ${c.estado==='entregado'?'entregado':'pendiente'}">${c.estado==='entregado'?'Entregado':'Pendiente'}</span></td>
+                      <td>${c.montoBoleta ? '$'+c.montoBoleta : '—'}</td>
+                      <td>${c.estado==='entregado' ? '$'+(c.totalCobrado ?? c.montoBoleta ?? 0) : '—'}</td>
+                      <td><button class="btn btn-ghost" style="padding:4px 8px; font-size:11.5px;" onclick="openEditarBoletaSheet('${c.id}','${(c.nombre||'').replace(/'/g,"\\'")}', ${c.montoBoleta||0})">Editar boleta</button></td>
+                      <td><button class="btn btn-ghost" style="padding:4px 8px; font-size:11.5px;" onclick="quitarClienteDeViaje('${c.id}','${c.nombre.replace(/'/g,"\\'")}')">Quitar</button></td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </details>
+          </div>
+        </details>
       `;
     }).join('') || `<div class="sub">Todavía no armaste ningún reparto hoy. Andá a "Armar rutas".</div>`;
   });
