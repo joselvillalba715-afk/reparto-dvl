@@ -647,6 +647,7 @@ async function borrarTodosClientes(){
 let rutaSeleccion = new Set();
 let selectedCamion = {}; // { clienteId: 'Camion 2' } — camión elegido para hoy
 let selectedViaje = {};  // { clienteId: 1 } — n° de viaje/reparto de hoy
+let selectedMontoBoleta = {}; // { clienteId: 15000 } — monto de la boleta cargado al armar la ruta
 
 function renderRutas(){
   renderBusquedaRutas();
@@ -696,6 +697,7 @@ function renderSeleccionados(){
         ${opcionesCamion.map(op=>`<option value="${op}" ${selectedCamion[c.id]===op?'selected':''}>${op}</option>`).join('')}
       </select>
       <input type="number" min="1" class="viajeInputRow" data-cliente="${c.id}" value="${selectedViaje[c.id]}" title="N° de viaje" style="width:56px; font-size:12.5px; padding:6px 8px;">
+      <input type="number" min="0" class="boletaInputRow" data-cliente="${c.id}" value="${selectedMontoBoleta[c.id] || ''}" placeholder="$ boleta" title="Monto de la boleta" style="width:90px; font-size:12.5px; padding:6px 8px;">
       <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="quitarDeRuta('${c.id}')">Quitar</button>
     </div>`;
   }).join('') || `<div class="sub">Todavía no agregaste clientes. Buscalos arriba.</div>`;
@@ -705,6 +707,9 @@ function renderSeleccionados(){
   });
   document.querySelectorAll('.viajeInputRow').forEach(inp=>{
     inp.addEventListener('change', ()=>{ selectedViaje[inp.dataset.cliente] = parseInt(inp.value) || 1; });
+  });
+  document.querySelectorAll('.boletaInputRow').forEach(inp=>{
+    inp.addEventListener('change', ()=>{ selectedMontoBoleta[inp.dataset.cliente] = parseFloat(inp.value) || 0; });
   });
 }
 
@@ -724,10 +729,11 @@ async function guardarRutaDelDia(){
     if(!cliente) continue;
     const camion = selectedCamion[clienteId] || CAMIONES[0];
     const viaje = selectedViaje[clienteId] || 1;
+    const montoBoleta = selectedMontoBoleta[clienteId] || 0;
     const entregaId = `${fecha}_${clienteId}_v${viaje}`;
     batchWrites.push(setDoc(doc(db,'entregas',entregaId), {
       fecha, viaje, clienteId, nombre:cliente.nombre, direccion:cliente.direccion||'',
-      numero:cliente.numero||'', telefono:cliente.telefono||'', camion,
+      numero:cliente.numero||'', telefono:cliente.telefono||'', camion, montoBoleta,
       estado:'pendiente', formaPago:null, montos:{}, envases:{},
       observaciones:'', horaEntrega:null
     }, {merge:true}));
@@ -858,14 +864,20 @@ async function guardarAnticipo(){
 async function renderEnvases(){
   await loadClientes();
   const saldoTotal = c => Object.values(c.envaseSaldo||{}).reduce((a,b)=>a+b,0);
+  const fmtFechaCorta = (iso) => {
+    if(!iso) return '';
+    const [y,m,d] = iso.split('-');
+    return `${d}/${m}`;
+  };
   document.getElementById('envasesTable').innerHTML = CLIENTES
     .slice()
     .sort((a,b)=> saldoTotal(b) - saldoTotal(a))
     .map(c=>{
       const saldo = c.envaseSaldo || {};
+      const debeDesde = c.envaseDebeDesde || {};
       const badges = TIPOS_ENVASE
         .filter(t => saldo[t])
-        .map(t => `<span class="badge ${saldo[t]>0?'debe':'ok'}">${t}: ${saldo[t]}</span>`)
+        .map(t => `<span class="badge ${saldo[t]>0?'debe':'ok'}">${t}: ${saldo[t]}${saldo[t]>0 && debeDesde[t] ? ' (desde '+fmtFechaCorta(debeDesde[t])+')' : ''}</span>`)
         .join(' ');
       return `
         <tr>
@@ -902,6 +914,22 @@ function calcularProgreso(clientes){
   return { pct, completados, mensajeRegreso: `Regreso estimado: ${horaTxt} (según el ritmo de hoy)` };
 }
 
+function calcularDesglosePago(clientes){
+  const totales = { efectivo:0, transferencia:0, qr:0 };
+  clientes.forEach(e=>{
+    if(e.estado !== 'entregado') return;
+    if(e.formaPago === 'mixto'){
+      totales.efectivo += (e.montos?.efectivo || 0);
+      totales.transferencia += (e.montos?.transferencia || 0);
+      totales.qr += (e.montos?.qr || 0);
+    } else if(e.formaPago === 'efectivo' || e.formaPago === 'transferencia' || e.formaPago === 'qr'){
+      totales[e.formaPago] += (e.montoBoleta || 0);
+    }
+    // 'no_pago' no suma a ningún medio
+  });
+  return totales;
+}
+
 async function renderConsolidado(){
   const fecha = todayStr();
   const { db, collection, query, where, onSnapshot, doc, getDoc, setDoc } = window.__fb;
@@ -932,12 +960,14 @@ async function renderConsolidado(){
     document.getElementById('consolidadoCamiones').innerHTML = grupos.map((g, idx)=>{
       const cargaCamion = cargasPorGrupo[idx].exists() ? cargasPorGrupo[idx].data() : {};
       const progreso = calcularProgreso(g.clientes);
+      const pagos = calcularDesglosePago(g.clientes);
       return `
         <div style="border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px;">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
             <div>
               <div style="font-weight:700;">${g.camion} · Viaje ${g.viaje}</div>
               <div class="sub" style="margin:2px 0 0;">${g.clientes.length} clientes · $${g.totalBoleta.toLocaleString('es-AR')} en boletas cargadas</div>
+              <div class="sub" style="margin:2px 0 0;">Efectivo: $${pagos.efectivo.toLocaleString('es-AR')} · Transferencia: $${pagos.transferencia.toLocaleString('es-AR')} · QR: $${pagos.qr.toLocaleString('es-AR')}</div>
             </div>
             <button class="btn btn-ghost" style="color:var(--red); border-color:var(--red); padding:6px 12px; font-size:12px;" onclick="eliminarViaje('${g.camion}', ${g.viaje})">Eliminar viaje</button>
           </div>
@@ -1153,16 +1183,27 @@ async function confirmarEntrega(){
   const tiposAfectados = new Set([...Object.keys(envasesPrevios), ...Object.keys(envases)]);
   if(tiposAfectados.size){
     const clienteRef = doc(db,'clientes_reparto', activeClienteId);
+    const fechaHoy = todayStr();
     await runTransaction(db, async (tx)=>{
       const snap = await tx.get(clienteRef);
       const saldoActual = snap.exists() ? (snap.data().envaseSaldo||{}) : {};
+      const debeDesdeActual = snap.exists() ? (snap.data().envaseDebeDesde||{}) : {};
       const nuevoSaldo = {...saldoActual};
+      const nuevoDebeDesde = {...debeDesdeActual};
       tiposAfectados.forEach(tipo=>{
         const diffPrevio = (envasesPrevios[tipo]?.salieron||0) - (envasesPrevios[tipo]?.volvieron||0);
         const diffNuevo = (envases[tipo]?.salieron||0) - (envases[tipo]?.volvieron||0);
-        nuevoSaldo[tipo] = (nuevoSaldo[tipo]||0) - diffPrevio + diffNuevo;
+        const saldoAnterior = nuevoSaldo[tipo] || 0;
+        nuevoSaldo[tipo] = saldoAnterior - diffPrevio + diffNuevo;
+        if(nuevoSaldo[tipo] > 0 && saldoAnterior <= 0){
+          // recién empieza a deber este producto
+          nuevoDebeDesde[tipo] = fechaHoy;
+        } else if(nuevoSaldo[tipo] <= 0){
+          // quedó saldado, se borra la fecha de inicio de deuda
+          delete nuevoDebeDesde[tipo];
+        }
       });
-      tx.update(clienteRef, { envaseSaldo: nuevoSaldo });
+      tx.update(clienteRef, { envaseSaldo: nuevoSaldo, envaseDebeDesde: nuevoDebeDesde });
     });
   }
   toast('Entrega guardada');
