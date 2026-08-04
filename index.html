@@ -51,7 +51,7 @@
   .tab{font-family:var(--mono); font-size:12px; letter-spacing:.04em; padding:9px 14px; border-radius:999px; border:1px solid var(--line); background:var(--panel); cursor:pointer; white-space:nowrap; color:var(--ink-soft);}
   .tab.active{background:var(--ink); color:#fff; border-color:var(--ink);}
 
-  .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; margin-bottom:14px;}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; margin-bottom:14px; overflow-x:auto;}
   .card h2{margin:0 0 4px; font-size:16px;}
   .card .sub{color:var(--ink-soft); font-size:13px; margin-bottom:14px;}
 
@@ -70,7 +70,10 @@
   .btn-ghost{background:transparent; border:1px solid var(--line); color:var(--ink);}
   .btn-block{width:100%;}
 
-  table{width:100%; border-collapse:collapse; font-size:13.5px;}
+  .card h2{margin:0 0 4px; font-size:16px;}
+  .card .sub{color:var(--ink-soft); font-size:13px; margin-bottom:14px;}
+
+  table{width:100%; min-width:480px; border-collapse:collapse; font-size:13.5px;}
   th{text-align:left; font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid var(--line); padding:8px 6px;}
   td{padding:9px 6px; border-bottom:1px solid #ece9df;}
   tr:last-child td{border-bottom:none;}
@@ -368,6 +371,23 @@
       </div>
 
       <button class="btn btn-primary btn-block" onclick="guardarAnticipo()">Guardar</button>
+      <button class="btn btn-ghost btn-block hidden" id="anticipoQuitarBtn" style="color:var(--red); border-color:var(--red); margin-top:8px;" onclick="quitarAnticipo()">Quitar transferencia</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL EDITAR MONTO DE BOLETA (ADMIN) ============ -->
+<div id="editarBoletaOverlay" class="overlay hidden" onclick="if(event.target===this)closeEditarBoletaSheet()">
+  <div class="sheet">
+    <div class="sheet-wrap">
+      <button class="close-x" onclick="closeEditarBoletaSheet()">✕</button>
+      <h3>Editar monto de boleta</h3>
+      <div class="addr" id="editarBoletaClientName">—</div>
+      <div class="field">
+        <label>Monto de la boleta ($)</label>
+        <input type="number" id="editarBoletaMonto" placeholder="0">
+      </div>
+      <button class="btn btn-primary btn-block" onclick="guardarEditarBoleta()">Guardar</button>
     </div>
   </div>
 </div>
@@ -951,7 +971,7 @@ async function renderDashboard(){
 function anticipoCell(e){
   if(e.anticipo){
     const tipoLabel = e.anticipo.tipo === 'total' ? 'Total' : 'Parcial';
-    return `<span class="badge ok">$${e.anticipo.monto} · ${tipoLabel}</span>`;
+    return `<span class="badge ok">$${e.anticipo.monto} · ${tipoLabel}</span> <button class="btn btn-ghost" style="padding:4px 8px; font-size:11px; margin-top:4px;" onclick="openAnticipoSheet('${e.id}')">Editar</button>`;
   }
   if(e.estado === 'entregado') return '—';
   return `<button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="openAnticipoSheet('${e.id}')">Marcar transferencia</button>`;
@@ -986,13 +1006,43 @@ let anticipoTipo = 'total';
 
 function openAnticipoSheet(entregaId){
   anticipoEntregaId = entregaId;
-  anticipoTipo = 'total';
   const e = window.__ENTREGAS_HOY_ADMIN[entregaId];
+  const existente = e.anticipo || null;
+  anticipoTipo = existente ? existente.tipo : 'total';
   document.getElementById('anticipoClientName').textContent = e.nombre;
-  document.getElementById('anticipoMonto').value = '';
-  document.getElementById('anticipoNota').value = '';
-  document.querySelectorAll('#anticipoPills .pill').forEach(p=>p.classList.toggle('selected', p.dataset.tipo==='total'));
+  document.getElementById('anticipoMonto').value = existente ? existente.monto : '';
+  document.getElementById('anticipoNota').value = existente ? (existente.nota || '') : '';
+  document.querySelectorAll('#anticipoPills .pill').forEach(p=>p.classList.toggle('selected', p.dataset.tipo===anticipoTipo));
+  document.getElementById('anticipoQuitarBtn').classList.toggle('hidden', !existente);
   document.getElementById('anticipoOverlay').classList.remove('hidden');
+}
+async function quitarAnticipo(){
+  const confirmado = confirm('¿Quitar la transferencia marcada para este cliente?');
+  if(!confirmado) return;
+  const { db, doc, updateDoc } = window.__fb;
+  await updateDoc(doc(db,'entregas',anticipoEntregaId), { anticipo: null });
+  toast('Transferencia quitada');
+  closeAnticipoSheet();
+}
+
+/* ---------- Editar monto de boleta directamente (admin, sin abrir toda la ficha) ---------- */
+let editarBoletaEntregaId = null;
+function openEditarBoletaSheet(entregaId, nombre, montoActual){
+  editarBoletaEntregaId = entregaId;
+  document.getElementById('editarBoletaClientName').textContent = nombre;
+  document.getElementById('editarBoletaMonto').value = montoActual || '';
+  document.getElementById('editarBoletaOverlay').classList.remove('hidden');
+}
+function closeEditarBoletaSheet(){
+  document.getElementById('editarBoletaOverlay').classList.add('hidden');
+  editarBoletaEntregaId = null;
+}
+async function guardarEditarBoleta(){
+  const monto = parseFloat(document.getElementById('editarBoletaMonto').value) || 0;
+  const { db, doc, updateDoc } = window.__fb;
+  await updateDoc(doc(db,'entregas',editarBoletaEntregaId), { montoBoleta: monto });
+  toast('Monto de boleta actualizado');
+  closeEditarBoletaSheet();
 }
 function closeAnticipoSheet(){
   document.getElementById('anticipoOverlay').classList.add('hidden');
@@ -1215,13 +1265,14 @@ async function renderConsolidado(){
           <details style="margin-top:10px;">
             <summary style="cursor:pointer; font-size:12.5px; color:var(--ink-soft); font-weight:600;">Ver / modificar clientes de este viaje (${g.clientes.length})</summary>
             <table style="margin-top:8px;">
-              <thead><tr><th>Cliente</th><th>Estado</th><th>Boleta</th><th></th></tr></thead>
+              <thead><tr><th>Cliente</th><th>Estado</th><th>Boleta</th><th></th><th></th></tr></thead>
               <tbody>
                 ${g.clientes.map(c=>`
                   <tr>
                     <td>${c.nombre}</td>
                     <td><span class="badge ${c.estado==='entregado'?'entregado':'pendiente'}">${c.estado==='entregado'?'Entregado':'Pendiente'}</span></td>
                     <td>${c.montoBoleta ? '$'+c.montoBoleta : '—'}</td>
+                    <td><button class="btn btn-ghost" style="padding:4px 8px; font-size:11.5px;" onclick="openEditarBoletaSheet('${c.id}','${(c.nombre||'').replace(/'/g,"\\'")}', ${c.montoBoleta||0})">Editar boleta</button></td>
                     <td><button class="btn btn-ghost" style="padding:4px 8px; font-size:11.5px;" onclick="quitarClienteDeViaje('${c.id}','${c.nombre.replace(/'/g,"\\'")}')">Quitar</button></td>
                   </tr>
                 `).join('')}
@@ -1504,7 +1555,8 @@ Object.assign(window, {
   doLogin, logout, switchTab, elegirViaje,
   importClientes, eliminarCliente, borrarTodosClientes, renderRutas, renderBusquedaRutas, quitarDeRuta, guardarRutaDelDia,
   openSheet, openSheetAdmin, closeSheet, selectPago, confirmarEntrega,
-  openAnticipoSheet, closeAnticipoSheet, selectAnticipoTipo, guardarAnticipo,
+  openAnticipoSheet, closeAnticipoSheet, selectAnticipoTipo, guardarAnticipo, quitarAnticipo,
+  openEditarBoletaSheet, closeEditarBoletaSheet, guardarEditarBoleta,
   guardarCargaInicial, eliminarViaje, quitarClienteDeViaje, renderClientesTab, renderEnvasesTabla, toggleHistorial,
   guardarPrecioEnvase, actualizarTotalACobrar
 });
