@@ -244,7 +244,7 @@
       <div class="sub" id="progressText">0 de 0 entregados</div>
     </div>
     <div class="route-list" id="stopsList"></div>
-    <div id="driverEmpty" class="empty hidden">No hay clientes asignados para hoy en este camión.<br>Pedile al administrador que arme el reparto del día.</div>
+    <div id="driverEmpty" class="empty hidden">No hay clientes asignados para hoy en este camión.<br>Pedile al administrador que arme el reparto del día.<br><span id="driverEmptyDebug" style="font-family:var(--mono); font-size:11px; color:var(--ink-soft);"></span></div>
   </main>
 </div>
 
@@ -879,6 +879,7 @@ function loadDriverRoute(){
     document.getElementById('progressFill').style.width = total? `${(hechos/total)*100}%` : '0%';
     document.getElementById('progressText').textContent = `${hechos} de ${total} entregados`;
     document.getElementById('driverEmpty').classList.toggle('hidden', total>0);
+    document.getElementById('driverEmptyDebug').textContent = `Buscando: camión = "${currentCamion}" · viaje = ${currentViaje}`;
     // pendientes primero
     const ordenados = entregas.slice().sort((a,b)=>(a.estado==='entregado')-(b.estado==='entregado'));
     document.getElementById('stopsList').innerHTML = ordenados.map(e=>`
