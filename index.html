@@ -1097,11 +1097,14 @@ async function renderDashboard(){
     entregas.forEach(e=> window.__ENTREGAS_HOY_ADMIN[e.id] = e);
     document.getElementById('dashByCamion').innerHTML = Object.keys(byGrupo).sort().map(key=>{
       const g = byGrupo[key];
+      const hechosGrupo = g.lista.filter(e=>e.estado==='entregado').length;
       return `
-      <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:6px;">
-          <h2 style="margin:0;">${g.camion} · Viaje ${g.viaje}</h2>
-          <button class="btn btn-ghost" style="padding:6px 12px; font-size:12px;" onclick="openAgregarClienteViaje('${g.camion}', ${g.viaje})">+ Agregar cliente</button>
+      <details class="card" open>
+        <summary style="cursor:pointer; list-style:none; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <h2 style="margin:0;">${g.camion} · Viaje ${g.viaje} <span class="sub" style="font-weight:400;">(${hechosGrupo}/${g.lista.length})</span></h2>
+        </summary>
+        <div style="display:flex; justify-content:flex-end; margin:10px 0 6px;">
+          <button class="btn btn-ghost" style="padding:6px 12px; font-size:12px;" onclick="event.preventDefault(); openAgregarClienteViaje('${g.camion}', ${g.viaje})">+ Agregar cliente</button>
         </div>
         <table>
           <thead><tr><th>Cliente</th><th>Estado</th><th>Boleta</th><th>Total cobrado</th><th>Pago</th><th>Envases</th><th>Transferencia</th><th></th></tr></thead>
@@ -1120,7 +1123,7 @@ async function renderDashboard(){
             `).join('')}
           </tbody>
         </table>
-      </div>
+      </details>
     `;
     }).join('') || `<div class="sub">Todavía no armaste el reparto de hoy. Andá a "Armar rutas".</div>`;
   });
