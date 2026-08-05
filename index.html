@@ -320,6 +320,11 @@
       <div class="progress-bar"><div class="fill" id="progressFill" style="width:0%"></div></div>
       <div class="sub" id="progressText">0 de 0 entregados</div>
     </div>
+    <div class="card hidden" id="driverDebeVolverCard" style="margin-bottom:12px;">
+      <h2 style="margin:0 0 4px;">Al volver al galpón</h2>
+      <div class="sub" style="margin-bottom:10px;">Cuánto deberías traer de vuelta según lo que llevaste, devolviste y vendiste hasta ahora.</div>
+      <div id="driverDebeVolver"></div>
+    </div>
     <div class="route-list" id="stopsList"></div>
     <div id="driverEmpty" class="empty hidden">No hay clientes asignados para hoy en este camión.<br>Pedile al administrador que arme el reparto del día.<br><span id="driverEmptyDebug" style="font-family:var(--mono); font-size:11px; color:var(--ink-soft);"></span></div>
   </main>
@@ -1564,9 +1569,21 @@ async function guardarCargaInicial(camion, viaje, tipo, valor){
 /* =======================================================================
    VISTA CHOFER
    ======================================================================= */
-function loadDriverRoute(){
+let driverCargaInicial = null;
+
+async function loadDriverRoute(){
   const fecha = todayStr();
-  const { db, collection, query, where, onSnapshot } = window.__fb;
+  const { db, collection, query, where, onSnapshot, doc, getDoc } = window.__fb;
+
+  // Trae una sola vez la carga inicial que se cargó para este camión/viaje hoy
+  try {
+    const snap = await getDoc(doc(db,'cargas_camion', `${fecha}_${currentCamion}_v${currentViaje}`));
+    driverCargaInicial = snap.exists() ? snap.data() : {};
+  } catch(err){
+    console.error('No se pudo leer la carga inicial:', err);
+    driverCargaInicial = null;
+  }
+
   const q = query(collection(db,'entregas'), where('fecha','==',fecha), where('camion','==',currentCamion), where('viaje','==',currentViaje));
   onSnapshot(q, (snap)=>{
     const entregas = snap.docs.map(d=>({id:d.id, ...d.data()}));
@@ -1577,6 +1594,7 @@ function loadDriverRoute(){
     document.getElementById('progressText').textContent = `${hechos} de ${total} entregados`;
     document.getElementById('driverEmpty').classList.toggle('hidden', total>0);
     document.getElementById('driverEmptyDebug').textContent = `Buscando: camión = "${currentCamion}" · viaje = ${currentViaje}`;
+    renderDebeVolverChofer(entregas);
     // pendientes primero
     const ordenados = entregas.slice().sort((a,b)=>(a.estado==='entregado')-(b.estado==='entregado'));
     document.getElementById('stopsList').innerHTML = ordenados.map(e=>`
@@ -1590,6 +1608,40 @@ function loadDriverRoute(){
       </div>
     `).join('');
   });
+}
+
+function renderDebeVolverChofer(entregas){
+  const card = document.getElementById('driverDebeVolverCard');
+  const el = document.getElementById('driverDebeVolver');
+  if(!card || !el) return;
+  if(driverCargaInicial === null || !Object.keys(driverCargaInicial).length){
+    card.classList.add('hidden');
+    return;
+  }
+  const porTipo = {};
+  TIPOS_ENVASE.forEach(t => porTipo[t] = { prestado:0, devuelto:0, vendidoBotellas:0 });
+  entregas.forEach(e=>{
+    if(e.estado !== 'entregado') return;
+    const envases = e.envases || {};
+    Object.keys(envases).forEach(tipo=>{
+      if(!porTipo[tipo]) porTipo[tipo] = { prestado:0, devuelto:0, vendidoBotellas:0 };
+      porTipo[tipo].prestado += envases[tipo].prestaron||0;
+      porTipo[tipo].devuelto += envases[tipo].devolvieron||0;
+      porTipo[tipo].vendidoBotellas += envases[tipo].vendieron||0;
+    });
+  });
+  card.classList.remove('hidden');
+  el.innerHTML = TIPOS_ENVASE.map(tipo=>{
+    const por = BOTELLAS_POR_CAJON[tipo] || 1;
+    const d = porTipo[tipo];
+    const cargaInicial = driverCargaInicial[tipo] || 0;
+    const debeVolver = cargaInicial - d.prestado + d.devuelto - (d.vendidoBotellas/por);
+    return `
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #ece9df;">
+        <span style="font-weight:600;">${tipo}</span>
+        <span style="font-size:15px; font-weight:700;">${formatCajones(tipo, debeVolver)}</span>
+      </div>`;
+  }).join('');
 }
 
 /* ---------- Modal de entrega ---------- */
