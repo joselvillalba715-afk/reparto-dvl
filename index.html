@@ -249,6 +249,15 @@
         <div id="consolidadoCamiones"></div>
       </div>
       <div class="card">
+        <h2>Prestar o registrar envases en el galpón</h2>
+        <div class="sub">Para cuando le prestás cajones a un cliente directo en el depósito, o te devuelve algo, sin que sea parte de un reparto. Buscá al cliente, elegí uno y cargá el movimiento.</div>
+        <div class="field">
+          <label>Buscar cliente</label>
+          <input type="text" id="galponSearch" placeholder="Nombre o número..." oninput="renderBusquedaGalpon()">
+        </div>
+        <div id="galponSearchResults"></div>
+      </div>
+      <div class="card">
         <h2>Cuenta corriente de envases por cliente</h2>
         <div class="sub">Saldo acumulado de cajones retornables que cada cliente tiene pendiente de devolver, por producto. Ordenado de mayor a menor deuda.</div>
         <button class="btn btn-ghost" style="margin-bottom:14px; font-size:12.5px;" onclick="recalcularTodosLosSaldos()" id="recalcularBtn">Recalcular saldos con la fórmula actual</button>
@@ -485,6 +494,11 @@
         <input type="text" id="ajustarSaldoNota" placeholder="Ej: vino al galpón a devolver">
       </div>
 
+      <div class="field">
+        <label>Registrado por (opcional)</label>
+        <input type="text" id="ajustarSaldoResponsable" placeholder="Ej: José Luis, Marcos...">
+      </div>
+
       <button class="btn btn-primary btn-block" onclick="guardarAjusteSaldo()">Guardar ajuste</button>
     </div>
   </div>
@@ -562,6 +576,7 @@ let ENTREGAS_HOY = {};      // clienteId -> entrega doc
 let currentRole = null;     // 'admin' | 'driver'
 let currentCamion = null;
 let currentViaje = 1;
+let currentChoferNombre = null; // nombre del chofer logueado, para dejar registro de quién prestó cada envase
 let PRECIO_ENVASE = 2000; // precio por envase vendido cuando al cliente le falta devolver
 let activeClienteId = null;
 let activeEntregaId = null;
@@ -660,6 +675,7 @@ async function routeAfterLogin(user){
   } else {
     currentRole = 'driver';
     currentCamion = perfil.camion;
+    currentChoferNombre = perfil.nombre || null;
     await resolverViajeChofer();
   }
 }
@@ -693,7 +709,7 @@ function elegirViaje(v){
 
 function entrarComoChofer(){
   document.getElementById('driverView').classList.remove('hidden');
-  document.getElementById('driverCamionLabel').textContent = `${currentCamion} · Viaje ${currentViaje}`;
+  document.getElementById('driverCamionLabel').textContent = `${currentChoferNombre ? currentChoferNombre+' · ' : ''}${currentCamion} · Viaje ${currentViaje}`;
   document.getElementById('driverDate').textContent = fmtDate(todayStr());
   loadDriverRoute();
 }
@@ -1172,6 +1188,31 @@ async function guardarCambiarCamion(){
 /* ---------- Ajuste manual de saldo de envases (admin) ---------- */
 let ajustarSaldoClienteId = null;
 let ajustarSaldoMov = 'devolvieron';
+function renderBusquedaGalpon(){
+  const resultsEl = document.getElementById('galponSearchResults');
+  if(!resultsEl) return;
+  const q = (document.getElementById('galponSearch')?.value || '').trim().toLowerCase();
+  if(q.length < 2){
+    resultsEl.innerHTML = `<div class="sub">Escribí al menos 2 letras para buscar entre tus ${CLIENTES.length} clientes.</div>`;
+    return;
+  }
+  const matches = CLIENTES.filter(c =>
+    (c.nombre||'').toLowerCase().includes(q) || (c.numero||'').toLowerCase().includes(q)
+  ).slice(0, 20);
+  resultsEl.innerHTML = matches.map(c=>{
+    const saldo = c.envaseSaldo || {};
+    const badges = TIPOS_ENVASE.filter(t=>saldo[t]).map(t=>`<span class="badge ${saldo[t]>0?'debe':'ok'}">${t}: ${formatCajones(t, saldo[t])}</span>`).join(' ');
+    return `
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid #ece9df; flex-wrap:wrap;">
+        <div>
+          <b>${c.nombre}</b> ${c.numero?`<span style="color:var(--ink-soft); font-size:12px;">#${c.numero}</span>`:''}
+          <div style="margin-top:3px;">${badges || `<span class="badge ok">Al día</span>`}</div>
+        </div>
+        <button class="btn btn-primary" style="padding:7px 14px; font-size:12.5px;" onclick="openAjustarSaldoSheet('${c.id}','${(c.nombre||'').replace(/'/g,"\\'")}')">Registrar movimiento</button>
+      </div>`;
+  }).join('') || `<div class="sub">No encontré clientes con "${q}".</div>`;
+}
+
 function openAjustarSaldoSheet(clienteId, nombre){
   ajustarSaldoClienteId = clienteId;
   ajustarSaldoMov = 'devolvieron';
@@ -1179,6 +1220,7 @@ function openAjustarSaldoSheet(clienteId, nombre){
   document.getElementById('ajustarSaldoTipo').innerHTML = TIPOS_ENVASE.map(t=>`<option value="${t}">${t}</option>`).join('');
   document.getElementById('ajustarSaldoCantidad').value = '';
   document.getElementById('ajustarSaldoNota').value = '';
+  document.getElementById('ajustarSaldoResponsable').value = '';
   document.querySelectorAll('#ajustarSaldoPills .pill').forEach(p=>p.classList.toggle('selected', p.dataset.mov==='devolvieron'));
   document.getElementById('ajustarSaldoOverlay').classList.remove('hidden');
 }
@@ -1194,6 +1236,7 @@ async function guardarAjusteSaldo(){
   const tipo = document.getElementById('ajustarSaldoTipo').value;
   const cantidad = parseFloat(document.getElementById('ajustarSaldoCantidad').value) || 0;
   const nota = document.getElementById('ajustarSaldoNota').value.trim();
+  const responsable = document.getElementById('ajustarSaldoResponsable').value.trim();
   if(!cantidad){ toast('Cargá una cantidad'); return; }
 
   const { db, doc, runTransaction } = window.__fb;
@@ -1223,6 +1266,7 @@ async function guardarAjusteSaldo(){
           fecha: fechaHoy,
           manual: true,
           nota,
+          chofer: responsable || null,
           movimientos: { [tipo]: { prestaron: ajustarSaldoMov==='prestaron'?cantidad:0, devolvieron: ajustarSaldoMov==='devolvieron'?cantidad:0 } }
         }
       };
@@ -1553,13 +1597,16 @@ function renderEnvasesTabla(){
     const filasHistorial = historial.length
       ? historial.flatMap(h => Object.entries(h.movimientos||{}).flatMap(([tipo, m])=>{
           const fecha = h.fecha ? fmtFechaCorta(h.fecha) : '—';
+          const responsable = h.manual
+            ? `Ajuste manual${h.chofer ? ' — '+h.chofer : ''}`
+            : (h.chofer || '—');
           const lineas = [];
           if(m.prestaron || m.devolvieron){
             const partes = [];
             if(m.prestaron) partes.push(`Prestaron ${formatCajones(tipo, m.prestaron)}`);
             if(m.devolvieron) partes.push(`Devolvieron ${formatCajones(tipo, m.devolvieron)}`);
             let linea = partes.join(' · ');
-            if(h.manual) linea += ` <span style="color:var(--blue); font-weight:600;">· Ajuste manual${h.nota ? ' — '+h.nota : ''}</span>`;
+            if(h.manual && h.nota) linea += ` <span style="color:var(--ink-soft); font-size:11.5px;">(${h.nota})</span>`;
             lineas.push(linea);
           }
           if(m.vendieron){
@@ -1570,9 +1617,10 @@ function renderEnvasesTabla(){
             <td>${fecha}</td>
             <td>${tipo}</td>
             <td>${linea}</td>
+            <td style="font-size:12px; color:${h.manual?'var(--blue)':'var(--ink-soft)'};">${responsable}</td>
           </tr>`);
         })).join('')
-      : `<tr><td colspan="3" style="color:var(--ink-soft);">Sin movimientos registrados todavía.</td></tr>`;
+      : `<tr><td colspan="4" style="color:var(--ink-soft);">Sin movimientos registrados todavía.</td></tr>`;
 
     return `
       <tr class="histToggleRow" onclick="toggleHistorial('${c.id}')" style="cursor:pointer;">
@@ -1587,7 +1635,7 @@ function renderEnvasesTabla(){
             <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="event.stopPropagation(); openAjustarSaldoSheet('${c.id}','${(c.nombre||'').replace(/'/g,"\\'")}')">Ajustar saldo</button>
           </div>
           <table>
-            <thead><tr><th>Fecha</th><th>Producto</th><th>Movimiento</th></tr></thead>
+            <thead><tr><th>Fecha</th><th>Producto</th><th>Movimiento</th><th>Responsable</th></tr></thead>
             <tbody>${filasHistorial}</tbody>
           </table>
         </td>
@@ -2068,7 +2116,8 @@ async function confirmarEntrega(){
         // un registro de historial por entrega — si se corrige, se reemplaza en vez de duplicar
         const nuevoHistorial = {...historialActual};
         if(Object.keys(movimientosEntrega).length){
-          nuevoHistorial[activeEntregaId] = { fecha: fechaHoy, movimientos: movimientosEntrega };
+          const choferOriginal = historialActual[activeEntregaId]?.chofer;
+          nuevoHistorial[activeEntregaId] = { fecha: fechaHoy, chofer: currentChoferNombre || choferOriginal || null, movimientos: movimientosEntrega };
         } else {
           delete nuevoHistorial[activeEntregaId];
         }
@@ -2094,7 +2143,7 @@ Object.assign(window, {
   openAnticipoSheet, closeAnticipoSheet, selectAnticipoTipo, guardarAnticipo, quitarAnticipo,
   openEditarBoletaSheet, closeEditarBoletaSheet, guardarEditarBoleta,
   openCambiarCamionSheet, closeCambiarCamionSheet, guardarCambiarCamion,
-  openAjustarSaldoSheet, closeAjustarSaldoSheet, selectAjustarSaldoMov, guardarAjusteSaldo,
+  openAjustarSaldoSheet, closeAjustarSaldoSheet, selectAjustarSaldoMov, guardarAjusteSaldo, renderBusquedaGalpon,
   guardarCargaInicial, eliminarViaje, quitarClienteDeViaje, renderClientesTab, renderEnvasesTabla, toggleHistorial,
   guardarPrecioEnvase, actualizarTotalACobrar, recalcularTodosLosSaldos,
   verDiaAnterior, archivarRepartosViejos, cargarResumenesArchivados
