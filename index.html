@@ -455,6 +455,41 @@
   </div>
 </div>
 
+<!-- ============ MODAL AJUSTAR SALDO DE ENVASES (ADMIN) ============ -->
+<div id="ajustarSaldoOverlay" class="overlay hidden" onclick="if(event.target===this)closeAjustarSaldoSheet()">
+  <div class="sheet">
+    <div class="sheet-wrap">
+      <button class="close-x" onclick="closeAjustarSaldoSheet()">✕</button>
+      <h3>Ajustar saldo de envases</h3>
+      <div class="addr" id="ajustarSaldoClientName">—</div>
+      <div class="sub" style="margin-bottom:14px;">Para cuando un cliente devuelve cajones directo en el galpón, o un chofer se olvidó de cargar algo. Queda anotado en el historial como ajuste manual.</div>
+
+      <div class="field">
+        <label>Producto</label>
+        <select id="ajustarSaldoTipo"></select>
+      </div>
+
+      <label>Tipo de movimiento</label>
+      <div class="pill-group" id="ajustarSaldoPills">
+        <div class="pill" data-mov="devolvieron" onclick="selectAjustarSaldoMov('devolvieron')">Devolvió cajones</div>
+        <div class="pill" data-mov="prestaron" onclick="selectAjustarSaldoMov('prestaron')">Se le prestaron cajones</div>
+      </div>
+
+      <div class="field">
+        <label>Cantidad de cajones</label>
+        <input type="number" min="0" step="0.5" id="ajustarSaldoCantidad" placeholder="0">
+      </div>
+
+      <div class="field">
+        <label>Nota (opcional)</label>
+        <input type="text" id="ajustarSaldoNota" placeholder="Ej: vino al galpón a devolver">
+      </div>
+
+      <button class="btn btn-primary btn-block" onclick="guardarAjusteSaldo()">Guardar ajuste</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast hidden"></div>
 
 <!-- ============ FIREBASE ============ -->
@@ -1133,6 +1168,75 @@ async function guardarCambiarCamion(){
   toast('Cliente movido a ' + nuevoCamion);
   closeCambiarCamionSheet();
 }
+
+/* ---------- Ajuste manual de saldo de envases (admin) ---------- */
+let ajustarSaldoClienteId = null;
+let ajustarSaldoMov = 'devolvieron';
+function openAjustarSaldoSheet(clienteId, nombre){
+  ajustarSaldoClienteId = clienteId;
+  ajustarSaldoMov = 'devolvieron';
+  document.getElementById('ajustarSaldoClientName').textContent = nombre;
+  document.getElementById('ajustarSaldoTipo').innerHTML = TIPOS_ENVASE.map(t=>`<option value="${t}">${t}</option>`).join('');
+  document.getElementById('ajustarSaldoCantidad').value = '';
+  document.getElementById('ajustarSaldoNota').value = '';
+  document.querySelectorAll('#ajustarSaldoPills .pill').forEach(p=>p.classList.toggle('selected', p.dataset.mov==='devolvieron'));
+  document.getElementById('ajustarSaldoOverlay').classList.remove('hidden');
+}
+function closeAjustarSaldoSheet(){
+  document.getElementById('ajustarSaldoOverlay').classList.add('hidden');
+  ajustarSaldoClienteId = null;
+}
+function selectAjustarSaldoMov(mov){
+  ajustarSaldoMov = mov;
+  document.querySelectorAll('#ajustarSaldoPills .pill').forEach(p=>p.classList.toggle('selected', p.dataset.mov===mov));
+}
+async function guardarAjusteSaldo(){
+  const tipo = document.getElementById('ajustarSaldoTipo').value;
+  const cantidad = parseFloat(document.getElementById('ajustarSaldoCantidad').value) || 0;
+  const nota = document.getElementById('ajustarSaldoNota').value.trim();
+  if(!cantidad){ toast('Cargá una cantidad'); return; }
+
+  const { db, doc, runTransaction } = window.__fb;
+  const clienteRef = doc(db,'clientes_reparto', ajustarSaldoClienteId);
+  const fechaHoy = todayStr();
+  const ajusteId = `manual_${Date.now()}`;
+
+  try {
+    await runTransaction(db, async (tx)=>{
+      const snap = await tx.get(clienteRef);
+      const saldoActual = snap.exists() ? (snap.data().envaseSaldo||{}) : {};
+      const debeDesdeActual = snap.exists() ? (snap.data().envaseDebeDesde||{}) : {};
+      const historialActual = snap.exists() ? (snap.data().envaseHistorial||{}) : {};
+
+      const diff = ajustarSaldoMov === 'prestaron' ? cantidad : -cantidad;
+      const saldoAnterior = saldoActual[tipo] || 0;
+      const nuevoSaldo = {...saldoActual, [tipo]: saldoAnterior + diff};
+      const nuevoDebeDesde = {...debeDesdeActual};
+      if(nuevoSaldo[tipo] > 0 && saldoAnterior <= 0){
+        nuevoDebeDesde[tipo] = fechaHoy;
+      } else if(nuevoSaldo[tipo] <= 0){
+        delete nuevoDebeDesde[tipo];
+      }
+      const nuevoHistorial = {
+        ...historialActual,
+        [ajusteId]: {
+          fecha: fechaHoy,
+          manual: true,
+          nota,
+          movimientos: { [tipo]: { prestaron: ajustarSaldoMov==='prestaron'?cantidad:0, devolvieron: ajustarSaldoMov==='devolvieron'?cantidad:0 } }
+        }
+      };
+      tx.update(clienteRef, { envaseSaldo: nuevoSaldo, envaseDebeDesde: nuevoDebeDesde, envaseHistorial: nuevoHistorial });
+    });
+    toast('Ajuste guardado');
+    closeAjustarSaldoSheet();
+    await loadClientes();
+    renderEnvasesTabla();
+  } catch(err){
+    console.error(err);
+    alert('No se pudo guardar el ajuste.\n\nError: ' + (err.code || err.message || err));
+  }
+}
 function closeAnticipoSheet(){
   document.getElementById('anticipoOverlay').classList.add('hidden');
   anticipoEntregaId = null;
@@ -1454,7 +1558,9 @@ function renderEnvasesTabla(){
             const partes = [];
             if(m.prestaron) partes.push(`Prestaron ${formatCajones(tipo, m.prestaron)}`);
             if(m.devolvieron) partes.push(`Devolvieron ${formatCajones(tipo, m.devolvieron)}`);
-            lineas.push(partes.join(' · '));
+            let linea = partes.join(' · ');
+            if(h.manual) linea += ` <span style="color:var(--blue); font-weight:600;">· Ajuste manual${h.nota ? ' — '+h.nota : ''}</span>`;
+            lineas.push(linea);
           }
           if(m.vendieron){
             lineas.push(`<span style="color:var(--ink-soft);">Vendieron ${m.vendieron} botellas (ya cobradas, sin relación con el préstamo)</span>`);
@@ -1476,7 +1582,10 @@ function renderEnvasesTabla(){
       </tr>
       <tr id="hist-${c.id}" class="hidden">
         <td colspan="3" style="background:#f7f6f1; padding:12px 16px;">
-          <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-soft); margin-bottom:8px;">Historial de préstamos y devoluciones — ${c.nombre}</div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:8px;">
+            <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-soft);">Historial de préstamos y devoluciones — ${c.nombre}</div>
+            <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="event.stopPropagation(); openAjustarSaldoSheet('${c.id}','${(c.nombre||'').replace(/'/g,"\\'")}')">Ajustar saldo</button>
+          </div>
           <table>
             <thead><tr><th>Fecha</th><th>Producto</th><th>Movimiento</th></tr></thead>
             <tbody>${filasHistorial}</tbody>
@@ -1985,6 +2094,7 @@ Object.assign(window, {
   openAnticipoSheet, closeAnticipoSheet, selectAnticipoTipo, guardarAnticipo, quitarAnticipo,
   openEditarBoletaSheet, closeEditarBoletaSheet, guardarEditarBoleta,
   openCambiarCamionSheet, closeCambiarCamionSheet, guardarCambiarCamion,
+  openAjustarSaldoSheet, closeAjustarSaldoSheet, selectAjustarSaldoMov, guardarAjusteSaldo,
   guardarCargaInicial, eliminarViaje, quitarClienteDeViaje, renderClientesTab, renderEnvasesTabla, toggleHistorial,
   guardarPrecioEnvase, actualizarTotalACobrar, recalcularTodosLosSaldos,
   verDiaAnterior, archivarRepartosViejos, cargarResumenesArchivados
