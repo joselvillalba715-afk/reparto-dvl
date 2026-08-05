@@ -251,6 +251,8 @@
       <div class="card">
         <h2>Cuenta corriente de envases por cliente</h2>
         <div class="sub">Saldo acumulado de cajones retornables que cada cliente tiene pendiente de devolver, por producto. Ordenado de mayor a menor deuda.</div>
+        <button class="btn btn-ghost" style="margin-bottom:14px; font-size:12.5px;" onclick="recalcularTodosLosSaldos()" id="recalcularBtn">Recalcular saldos con la fórmula actual</button>
+        <div class="sub" id="recalcularResultado"></div>
         <div class="row" style="align-items:flex-end; margin-bottom:6px;">
           <div class="field" style="margin-bottom:0;">
             <label>Buscar</label>
@@ -432,6 +434,23 @@
         <input type="number" id="editarBoletaMonto" placeholder="0">
       </div>
       <button class="btn btn-primary btn-block" onclick="guardarEditarBoleta()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL CAMBIAR CAMIÓN (ADMIN) ============ -->
+<div id="cambiarCamionOverlay" class="overlay hidden" onclick="if(event.target===this)closeCambiarCamionSheet()">
+  <div class="sheet">
+    <div class="sheet-wrap">
+      <button class="close-x" onclick="closeCambiarCamionSheet()">✕</button>
+      <h3>Cambiar camión</h3>
+      <div class="addr" id="cambiarCamionClientName">—</div>
+      <div class="field">
+        <label>Nuevo camión</label>
+        <select id="cambiarCamionSelect"></select>
+      </div>
+      <div class="sub" style="margin-bottom:14px;">Mueve al cliente a otro camión dentro del mismo viaje. Si el cliente ya tiene envases o pagos cargados, se mantienen igual.</div>
+      <button class="btn btn-primary btn-block" onclick="guardarCambiarCamion()">Guardar</button>
     </div>
   </div>
 </div>
@@ -1092,6 +1111,28 @@ async function guardarEditarBoleta(){
   toast('Monto de boleta actualizado');
   closeEditarBoletaSheet();
 }
+
+/* ---------- Cambiar de camión a un cliente ya dentro de una ruta armada ---------- */
+let cambiarCamionEntregaId = null;
+function openCambiarCamionSheet(entregaId, nombre, camionActual){
+  cambiarCamionEntregaId = entregaId;
+  document.getElementById('cambiarCamionClientName').textContent = nombre;
+  const opciones = CAMIONES.length ? CAMIONES : [camionActual];
+  document.getElementById('cambiarCamionSelect').innerHTML = opciones
+    .map(op=>`<option value="${op}" ${op===camionActual?'selected':''}>${op}</option>`).join('');
+  document.getElementById('cambiarCamionOverlay').classList.remove('hidden');
+}
+function closeCambiarCamionSheet(){
+  document.getElementById('cambiarCamionOverlay').classList.add('hidden');
+  cambiarCamionEntregaId = null;
+}
+async function guardarCambiarCamion(){
+  const nuevoCamion = document.getElementById('cambiarCamionSelect').value;
+  const { db, doc, updateDoc } = window.__fb;
+  await updateDoc(doc(db,'entregas',cambiarCamionEntregaId), { camion: nuevoCamion });
+  toast('Cliente movido a ' + nuevoCamion);
+  closeCambiarCamionSheet();
+}
 function closeAnticipoSheet(){
   document.getElementById('anticipoOverlay').classList.add('hidden');
   anticipoEntregaId = null;
@@ -1127,6 +1168,70 @@ function fmtFechaCorta(iso){
 function toggleHistorial(clienteId){
   const row = document.getElementById(`hist-${clienteId}`);
   if(row) row.classList.toggle('hidden');
+}
+
+async function recalcularTodosLosSaldos(){
+  const confirmado = confirm('Esto recalcula el saldo pendiente y "desde cuándo debe" de todos los clientes, usando el historial guardado y la fórmula actual (préstamo − devolución, sin contar ventas). No borra ni modifica el historial en sí. ¿Continuar?');
+  if(!confirmado) return;
+
+  const btn = document.getElementById('recalcularBtn');
+  const resultEl = document.getElementById('recalcularResultado');
+  btn.disabled = true;
+  btn.textContent = 'Recalculando...';
+
+  try {
+    await loadClientes();
+    const conHistorial = CLIENTES.filter(c => c.envaseHistorial && Object.keys(c.envaseHistorial).length);
+    if(!conHistorial.length){
+      resultEl.textContent = 'No hay clientes con historial para recalcular.';
+      return;
+    }
+
+    const { db, doc, writeBatch } = window.__fb;
+    let corregidos = 0;
+
+    for(let i=0; i<conHistorial.length; i+=400){
+      const lote = conHistorial.slice(i, i+400);
+      const batch = writeBatch(db);
+      lote.forEach(cliente=>{
+        // ordena los movimientos por fecha para reconstruir el saldo y "desde cuándo debe" correctamente
+        const movimientos = Object.values(cliente.envaseHistorial)
+          .filter(h => h.fecha)
+          .sort((a,b)=> a.fecha.localeCompare(b.fecha));
+
+        const nuevoSaldo = {};
+        const nuevoDebeDesde = {};
+        movimientos.forEach(h=>{
+          Object.entries(h.movimientos||{}).forEach(([tipo, m])=>{
+            const diff = (m.prestaron||0) - (m.devolvieron||0);
+            const anterior = nuevoSaldo[tipo] || 0;
+            nuevoSaldo[tipo] = anterior + diff;
+            if(nuevoSaldo[tipo] > 0 && anterior <= 0){
+              nuevoDebeDesde[tipo] = h.fecha;
+            } else if(nuevoSaldo[tipo] <= 0){
+              delete nuevoDebeDesde[tipo];
+            }
+          });
+        });
+
+        batch.update(doc(db,'clientes_reparto', cliente.id), { envaseSaldo: nuevoSaldo, envaseDebeDesde: nuevoDebeDesde });
+        corregidos++;
+      });
+      await batch.commit();
+      resultEl.textContent = `Recalculando... ${Math.min(i+400, conHistorial.length)} de ${conHistorial.length}`;
+    }
+
+    resultEl.textContent = `Listo: se recalcularon ${corregidos} clientes.`;
+    toast('Saldos recalculados');
+    await loadClientes();
+    renderEnvasesTabla();
+  } catch(err){
+    console.error(err);
+    resultEl.textContent = 'Error al recalcular: ' + (err.code || err.message || err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Recalcular saldos con la fórmula actual';
+  }
 }
 
 /* =======================================================================
@@ -1515,7 +1620,7 @@ async function renderConsolidado(){
             <details style="margin-top:4px;">
               <summary style="cursor:pointer; font-size:12.5px; color:var(--ink-soft); font-weight:600;">Ver / modificar clientes de este viaje (${g.clientes.length})</summary>
               <table style="margin-top:8px;">
-                <thead><tr><th>Cliente</th><th>Estado</th><th>Boleta</th><th>Cobrado</th><th></th><th></th></tr></thead>
+                <thead><tr><th>Cliente</th><th>Estado</th><th>Boleta</th><th>Cobrado</th><th></th><th></th><th></th></tr></thead>
                 <tbody>
                   ${g.clientes.map(c=>`
                     <tr>
@@ -1524,6 +1629,7 @@ async function renderConsolidado(){
                       <td>${c.montoBoleta ? '$'+c.montoBoleta : '—'}</td>
                       <td>${c.estado==='entregado' ? '$'+(c.totalCobrado ?? c.montoBoleta ?? 0) : '—'}</td>
                       <td><button class="btn btn-ghost" style="padding:4px 8px; font-size:11.5px;" onclick="openEditarBoletaSheet('${c.id}','${(c.nombre||'').replace(/'/g,"\\'")}', ${c.montoBoleta||0})">Editar boleta</button></td>
+                      <td><button class="btn btn-ghost" style="padding:4px 8px; font-size:11.5px;" onclick="openCambiarCamionSheet('${c.id}','${(c.nombre||'').replace(/'/g,"\\'")}','${g.camion}')">Cambiar camión</button></td>
                       <td><button class="btn btn-ghost" style="padding:4px 8px; font-size:11.5px;" onclick="quitarClienteDeViaje('${c.id}','${c.nombre.replace(/'/g,"\\'")}')">Quitar</button></td>
                     </tr>
                   `).join('')}
@@ -1878,8 +1984,9 @@ Object.assign(window, {
   openSheet, openSheetAdmin, closeSheet, selectPago, confirmarEntrega,
   openAnticipoSheet, closeAnticipoSheet, selectAnticipoTipo, guardarAnticipo, quitarAnticipo,
   openEditarBoletaSheet, closeEditarBoletaSheet, guardarEditarBoleta,
+  openCambiarCamionSheet, closeCambiarCamionSheet, guardarCambiarCamion,
   guardarCargaInicial, eliminarViaje, quitarClienteDeViaje, renderClientesTab, renderEnvasesTabla, toggleHistorial,
-  guardarPrecioEnvase, actualizarTotalACobrar,
+  guardarPrecioEnvase, actualizarTotalACobrar, recalcularTodosLosSaldos,
   verDiaAnterior, archivarRepartosViejos, cargarResumenesArchivados
 });
 </script>
