@@ -1336,12 +1336,25 @@ function renderEnvasesTabla(){
 
     const historial = Object.values(c.envaseHistorial || {}).sort((a,b)=> (b.fecha||'').localeCompare(a.fecha||''));
     const filasHistorial = historial.length
-      ? historial.flatMap(h => Object.entries(h.movimientos||{}).map(([tipo, m])=>`
+      ? historial.flatMap(h => Object.entries(h.movimientos||{}).flatMap(([tipo, m])=>{
+          const fecha = h.fecha ? fmtFechaCorta(h.fecha) : '—';
+          const lineas = [];
+          if(m.prestaron || m.devolvieron){
+            const partes = [];
+            if(m.prestaron) partes.push(`Prestaron ${formatCajones(tipo, m.prestaron)}`);
+            if(m.devolvieron) partes.push(`Devolvieron ${formatCajones(tipo, m.devolvieron)}`);
+            lineas.push(partes.join(' · '));
+          }
+          if(m.vendieron){
+            lineas.push(`<span style="color:var(--ink-soft);">Vendieron ${m.vendieron} botellas (ya cobradas, sin relación con el préstamo)</span>`);
+          }
+          return lineas.map(linea => `
           <tr>
-            <td>${h.fecha ? fmtFechaCorta(h.fecha) : '—'}</td>
+            <td>${fecha}</td>
             <td>${tipo}</td>
-            <td>${m.prestaron ? `Prestaron ${formatCajones(tipo, m.prestaron)}` : ''}${(m.prestaron && m.devolvieron) ? ' · ' : ''}${m.devolvieron ? `Devolvieron ${formatCajones(tipo, m.devolvieron)}` : ''}</td>
-          </tr>`)).join('')
+            <td>${linea}</td>
+          </tr>`);
+        })).join('')
       : `<tr><td colspan="3" style="color:var(--ink-soft);">Sin movimientos registrados todavía.</td></tr>`;
 
     return `
@@ -1781,8 +1794,8 @@ async function confirmarEntrega(){
             // quedó saldado, se borra la fecha de inicio de deuda
             delete nuevoDebeDesde[tipo];
           }
-          if(envases[tipo] && (envases[tipo].prestaron || envases[tipo].devolvieron)){
-            movimientosEntrega[tipo] = { prestaron: envases[tipo].prestaron||0, devolvieron: envases[tipo].devolvieron||0 };
+          if(envases[tipo] && (envases[tipo].prestaron || envases[tipo].devolvieron || envases[tipo].vendieron)){
+            movimientosEntrega[tipo] = { prestaron: envases[tipo].prestaron||0, devolvieron: envases[tipo].devolvieron||0, vendieron: envases[tipo].vendieron||0 };
           }
         });
         // un registro de historial por entrega — si se corrige, se reemplaza en vez de duplicar
