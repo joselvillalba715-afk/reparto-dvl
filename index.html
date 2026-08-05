@@ -504,6 +504,37 @@
   </div>
 </div>
 
+<!-- ============ MODAL AGREGAR CLIENTE A VIAJE YA ARMADO (ADMIN) ============ -->
+<div id="agregarClienteViajeOverlay" class="overlay hidden" onclick="if(event.target===this)closeAgregarClienteViaje()">
+  <div class="sheet">
+    <div class="sheet-wrap">
+      <button class="close-x" onclick="closeAgregarClienteViaje()">✕</button>
+      <h3>Agregar cliente al viaje</h3>
+      <div class="addr" id="agregarClienteViajeTitulo">—</div>
+
+      <div class="field" id="agregarClienteBuscarField">
+        <label>Buscar cliente</label>
+        <input type="text" id="agregarClienteSearch" placeholder="Nombre o número..." oninput="renderBusquedaAgregarCliente()">
+        <div id="agregarClienteResults" style="margin-top:8px;"></div>
+      </div>
+
+      <div id="agregarClienteConfirmar" class="hidden">
+        <div class="sub" style="margin-bottom:10px;">Cliente elegido: <b id="agregarClienteNombreElegido"></b> <button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="volverABuscarCliente()">Cambiar</button></div>
+        <div class="field">
+          <label>Monto de la boleta ($)</label>
+          <input type="number" min="0" id="agregarClienteBoleta" placeholder="0">
+        </div>
+        <div class="field">
+          <label>Cajones que le prestás (opcional)</label>
+          <div class="sub" style="margin-bottom:8px;">Si sale con cajones nuevos, cargalo acá para que el chofer ya lo vea precargado. Igual lo va a poder corregir si hace falta.</div>
+          <div id="agregarClientePrestamoInputs"></div>
+        </div>
+        <button class="btn btn-primary btn-block" onclick="confirmarAgregarClienteViaje()">Agregar al viaje</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast hidden"></div>
 
 <!-- ============ FIREBASE ============ -->
@@ -1057,18 +1088,25 @@ async function renderDashboard(){
       </div>`;
     const byGrupo = {};
     entregas.forEach(e=>{
-      const key = `${e.camion} · Viaje ${e.viaje||1}`;
-      (byGrupo[key] = byGrupo[key]||[]).push(e);
+      const viaje = e.viaje || 1;
+      const key = `${e.camion}||${viaje}`;
+      byGrupo[key] = byGrupo[key] || { camion: e.camion, viaje, lista: [] };
+      byGrupo[key].lista.push(e);
     });
     window.__ENTREGAS_HOY_ADMIN = {};
     entregas.forEach(e=> window.__ENTREGAS_HOY_ADMIN[e.id] = e);
-    document.getElementById('dashByCamion').innerHTML = Object.keys(byGrupo).sort().map(grupo=>`
+    document.getElementById('dashByCamion').innerHTML = Object.keys(byGrupo).sort().map(key=>{
+      const g = byGrupo[key];
+      return `
       <div class="card">
-        <h2>${grupo}</h2>
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:6px;">
+          <h2 style="margin:0;">${g.camion} · Viaje ${g.viaje}</h2>
+          <button class="btn btn-ghost" style="padding:6px 12px; font-size:12px;" onclick="openAgregarClienteViaje('${g.camion}', ${g.viaje})">+ Agregar cliente</button>
+        </div>
         <table>
           <thead><tr><th>Cliente</th><th>Estado</th><th>Boleta</th><th>Total cobrado</th><th>Pago</th><th>Envases</th><th>Transferencia</th><th></th></tr></thead>
           <tbody>
-            ${byGrupo[grupo].map(e=>`
+            ${g.lista.map(e=>`
               <tr>
                 <td>${e.nombre}</td>
                 <td><span class="badge ${e.estado==='entregado'?'entregado':'pendiente'}">${e.estado==='entregado'?'Entregado':'Pendiente'}</span></td>
@@ -1083,8 +1121,97 @@ async function renderDashboard(){
           </tbody>
         </table>
       </div>
-    `).join('') || `<div class="sub">Todavía no armaste el reparto de hoy. Andá a "Armar rutas".</div>`;
+    `;
+    }).join('') || `<div class="sub">Todavía no armaste el reparto de hoy. Andá a "Armar rutas".</div>`;
   });
+}
+
+/* ---------- Agregar cliente a un viaje que ya está armado ---------- */
+let agregarClienteViajeCamion = null;
+let agregarClienteViajeViaje = null;
+let agregarClienteElegidoId = null;
+
+function openAgregarClienteViaje(camion, viaje){
+  agregarClienteViajeCamion = camion;
+  agregarClienteViajeViaje = viaje;
+  agregarClienteElegidoId = null;
+  document.getElementById('agregarClienteViajeTitulo').textContent = `${camion} · Viaje ${viaje}`;
+  document.getElementById('agregarClienteSearch').value = '';
+  document.getElementById('agregarClienteResults').innerHTML = '';
+  document.getElementById('agregarClienteBuscarField').classList.remove('hidden');
+  document.getElementById('agregarClienteConfirmar').classList.add('hidden');
+  document.getElementById('agregarClienteViajeOverlay').classList.remove('hidden');
+}
+function closeAgregarClienteViaje(){
+  document.getElementById('agregarClienteViajeOverlay').classList.add('hidden');
+}
+function volverABuscarCliente(){
+  agregarClienteElegidoId = null;
+  document.getElementById('agregarClienteBuscarField').classList.remove('hidden');
+  document.getElementById('agregarClienteConfirmar').classList.add('hidden');
+}
+async function renderBusquedaAgregarCliente(){
+  const resultsEl = document.getElementById('agregarClienteResults');
+  const q = (document.getElementById('agregarClienteSearch')?.value || '').trim().toLowerCase();
+  if(q.length < 2){
+    resultsEl.innerHTML = `<div class="sub">Escribí al menos 2 letras para buscar.</div>`;
+    return;
+  }
+  if(!CLIENTES.length) await loadClientes();
+  const yaEnViaje = new Set(Object.values(window.__ENTREGAS_HOY_ADMIN || {})
+    .filter(e => e.camion === agregarClienteViajeCamion && (e.viaje||1) === agregarClienteViajeViaje)
+    .map(e => e.clienteId));
+  const matches = CLIENTES.filter(c =>
+    ((c.nombre||'').toLowerCase().includes(q) || (c.numero||'').toLowerCase().includes(q)) && !yaEnViaje.has(c.id)
+  ).slice(0, 20);
+  resultsEl.innerHTML = matches.map(c=>`
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #ece9df;">
+      <div><b>${c.nombre}</b> ${c.numero?`<span style="color:var(--ink-soft); font-size:12px;">#${c.numero}</span>`:''}<br><span style="color:var(--ink-soft); font-size:12px;">${c.direccion||''}</span></div>
+      <button class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="elegirClienteParaAgregar('${c.id}','${(c.nombre||'').replace(/'/g,"\\'")}')">Elegir</button>
+    </div>
+  `).join('') || `<div class="sub">No encontré clientes disponibles con "${q}".</div>`;
+}
+function elegirClienteParaAgregar(clienteId, nombre){
+  agregarClienteElegidoId = clienteId;
+  document.getElementById('agregarClienteNombreElegido').textContent = nombre;
+  document.getElementById('agregarClienteBoleta').value = '';
+  document.getElementById('agregarClientePrestamoInputs').innerHTML = TIPOS_ENVASE.map((tipo,i)=>`
+    <label class="field-mini" style="display:inline-flex; margin-right:14px;"><span>${tipo}</span>
+      <input type="number" min="0" step="0.5" id="agregarClientePrestamo_${i}" placeholder="0" style="width:80px;">
+    </label>
+  `).join('');
+  document.getElementById('agregarClienteBuscarField').classList.add('hidden');
+  document.getElementById('agregarClienteConfirmar').classList.remove('hidden');
+}
+async function confirmarAgregarClienteViaje(){
+  if(!agregarClienteElegidoId) return;
+  const cliente = CLIENTES.find(c=>c.id===agregarClienteElegidoId);
+  if(!cliente) return;
+  const montoBoleta = parseFloat(document.getElementById('agregarClienteBoleta').value) || 0;
+  const envases = {};
+  TIPOS_ENVASE.forEach((tipo,i)=>{
+    const cant = parseFloat(document.getElementById(`agregarClientePrestamo_${i}`)?.value) || 0;
+    if(cant) envases[tipo] = { prestaron: cant, devolvieron: 0, vendieron: 0 };
+  });
+  const fecha = todayStr();
+  const { db, doc, setDoc } = window.__fb;
+  const entregaId = `${fecha}_${agregarClienteElegidoId}_v${agregarClienteViajeViaje}`;
+  try {
+    await setDoc(doc(db,'entregas',entregaId), {
+      fecha, viaje: agregarClienteViajeViaje, clienteId: agregarClienteElegidoId,
+      nombre: cliente.nombre, direccion: cliente.direccion||'',
+      numero: cliente.numero||'', telefono: cliente.telefono||'',
+      camion: agregarClienteViajeCamion, montoBoleta,
+      estado:'pendiente', formaPago:null, montos:{}, envases,
+      envaseSaldoAlSalir: cliente.envaseSaldo || {},
+      observaciones:'', horaEntrega:null
+    }, {merge:true});
+    toast(`${cliente.nombre} agregado al viaje`);
+    closeAgregarClienteViaje();
+  } catch(err){
+    console.error(err);
+    alert('No se pudo agregar el cliente.\n\nError: ' + (err.code || err.message || err));
+  }
 }
 
 function anticipoCell(e){
@@ -2144,6 +2271,7 @@ Object.assign(window, {
   openEditarBoletaSheet, closeEditarBoletaSheet, guardarEditarBoleta,
   openCambiarCamionSheet, closeCambiarCamionSheet, guardarCambiarCamion,
   openAjustarSaldoSheet, closeAjustarSaldoSheet, selectAjustarSaldoMov, guardarAjusteSaldo, renderBusquedaGalpon,
+  openAgregarClienteViaje, closeAgregarClienteViaje, volverABuscarCliente, renderBusquedaAgregarCliente, elegirClienteParaAgregar, confirmarAgregarClienteViaje,
   guardarCargaInicial, eliminarViaje, quitarClienteDeViaje, renderClientesTab, renderEnvasesTabla, toggleHistorial,
   guardarPrecioEnvase, actualizarTotalACobrar, recalcularTodosLosSaldos,
   verDiaAnterior, archivarRepartosViejos, cargarResumenesArchivados
