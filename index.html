@@ -1340,7 +1340,7 @@ function renderEnvasesTabla(){
           <tr>
             <td>${h.fecha ? fmtFechaCorta(h.fecha) : '—'}</td>
             <td>${tipo}</td>
-            <td>${m.prestaron ? `Prestaron ${formatCajones(tipo, m.prestaron)}` : ''}${(m.prestaron && (m.devolvieron||m.vendieron)) ? ' · ' : ''}${m.devolvieron ? `Devolvieron ${formatCajones(tipo, m.devolvieron)}` : ''}${m.devolvieron && m.vendieron ? ' · ' : ''}${m.vendieron ? `Vendieron ${m.vendieron} botellas` : ''}</td>
+            <td>${m.prestaron ? `Prestaron ${formatCajones(tipo, m.prestaron)}` : ''}${(m.prestaron && m.devolvieron) ? ' · ' : ''}${m.devolvieron ? `Devolvieron ${formatCajones(tipo, m.devolvieron)}` : ''}</td>
           </tr>`)).join('')
       : `<tr><td colspan="3" style="color:var(--ink-soft);">Sin movimientos registrados todavía.</td></tr>`;
 
@@ -1781,8 +1781,8 @@ async function confirmarEntrega(){
             // quedó saldado, se borra la fecha de inicio de deuda
             delete nuevoDebeDesde[tipo];
           }
-          if(envases[tipo] && (envases[tipo].prestaron || envases[tipo].devolvieron || envases[tipo].vendieron)){
-            movimientosEntrega[tipo] = { prestaron: envases[tipo].prestaron||0, devolvieron: envases[tipo].devolvieron||0, vendieron: envases[tipo].vendieron||0 };
+          if(envases[tipo] && (envases[tipo].prestaron || envases[tipo].devolvieron)){
+            movimientosEntrega[tipo] = { prestaron: envases[tipo].prestaron||0, devolvieron: envases[tipo].devolvieron||0 };
           }
         });
         // un registro de historial por entrega — si se corrige, se reemplaza en vez de duplicar
