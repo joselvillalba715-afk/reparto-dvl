@@ -157,6 +157,7 @@
       <div class="tab" data-tab="clientes" onclick="switchTab('clientes')">Clientes</div>
       <div class="tab" data-tab="rutas" onclick="switchTab('rutas')">Armar rutas</div>
       <div class="tab" data-tab="envases" onclick="switchTab('envases')">Envases</div>
+      <div class="tab" data-tab="historial" onclick="switchTab('historial')">Historial</div>
     </div>
 
     <!-- HOY -->
@@ -263,6 +264,44 @@
         <table>
           <thead><tr><th>N°</th><th>Cliente</th><th>Saldo pendiente</th></tr></thead>
           <tbody id="envasesTable"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- HISTORIAL -->
+    <div id="tab-historial" class="hidden">
+      <div class="card">
+        <h2>Ver un día anterior</h2>
+        <div class="sub">Consultá el resumen de cualquier día ya pasado, mientras siga en el detalle (todavía no archivado).</div>
+        <div class="row" style="align-items:flex-end; max-width:320px;">
+          <div class="field" style="margin-bottom:0;">
+            <label>Fecha</label>
+            <input type="date" id="historialFecha">
+          </div>
+          <button class="btn btn-primary" onclick="verDiaAnterior()">Ver</button>
+        </div>
+        <div id="historialDiaResultado" style="margin-top:14px;"></div>
+      </div>
+
+      <div class="card">
+        <h2>Archivar repartos viejos</h2>
+        <div class="sub">Resume cada viaje (clientes, plata cobrada, envases) en un registro chico permanente, y borra el detalle día por día para no acumular espacio de más. Los resúmenes quedan guardados para siempre; el detalle completo de cada entrega no se puede recuperar después de archivar.</div>
+        <div class="row" style="align-items:flex-end; max-width:420px;">
+          <div class="field" style="margin-bottom:0;">
+            <label>Archivar repartos de más de</label>
+            <input type="number" min="1" id="diasArchivar" value="60" style="width:80px;"> días
+          </div>
+          <button class="btn btn-primary" onclick="archivarRepartosViejos()" id="archivarBtn">Archivar ahora</button>
+        </div>
+        <div class="sub" id="archivarResultado" style="margin-top:10px;"></div>
+      </div>
+
+      <div class="card">
+        <h2>Resúmenes archivados</h2>
+        <div class="sub">Historial permanente y liviano de repartos ya archivados.</div>
+        <table>
+          <thead><tr><th>Fecha</th><th>Camión</th><th>Viaje</th><th>Clientes</th><th>Cobrado</th></tr></thead>
+          <tbody id="resumenesTable"></tbody>
         </table>
       </div>
     </div>
@@ -399,7 +438,8 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
   getFirestore, collection, doc, getDocs, getDoc, setDoc, addDoc,
-  updateDoc, query, where, onSnapshot, runTransaction, deleteDoc, writeBatch
+  updateDoc, query, where, onSnapshot, runTransaction, deleteDoc, writeBatch,
+  orderBy, limit
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {
   getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut
@@ -427,7 +467,7 @@ const auth = getAuth(app);
 
 window.__fb = {
   db, collection, doc, getDocs, getDoc, setDoc, addDoc, updateDoc, query, where,
-  onSnapshot, runTransaction, deleteDoc, writeBatch,
+  onSnapshot, runTransaction, deleteDoc, writeBatch, orderBy, limit,
   auth, signInWithEmailAndPassword, onAuthStateChanged, signOut
 };
 </script>
@@ -614,12 +654,13 @@ window.addEventListener('DOMContentLoaded', ()=>{
 });
 function switchTab(name){
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
-  ['dashboard','clientes','rutas','envases'].forEach(t=>{
+  ['dashboard','clientes','rutas','envases','historial'].forEach(t=>{
     document.getElementById('tab-'+t).classList.toggle('hidden', t!==name);
   });
   if(name==='dashboard') renderDashboard();
   if(name==='envases') renderEnvases();
   if(name==='rutas') renderRutas();
+  if(name==='historial') renderHistorialTab();
 }
 
 /* =======================================================================
@@ -1080,6 +1121,179 @@ function fmtFechaCorta(iso){
 function toggleHistorial(clienteId){
   const row = document.getElementById(`hist-${clienteId}`);
   if(row) row.classList.toggle('hidden');
+}
+
+/* =======================================================================
+   HISTORIAL — ver días anteriores, archivar repartos viejos
+   ======================================================================= */
+function renderHistorialTab(){
+  if(!document.getElementById('historialFecha').value){
+    const ayer = new Date();
+    ayer.setDate(ayer.getDate()-1);
+    document.getElementById('historialFecha').value =
+      `${ayer.getFullYear()}-${String(ayer.getMonth()+1).padStart(2,'0')}-${String(ayer.getDate()).padStart(2,'0')}`;
+  }
+  cargarResumenesArchivados();
+}
+
+function agruparEntregasPorViaje(entregas){
+  const byGrupo = {};
+  entregas.forEach(e=>{
+    const viaje = e.viaje || 1;
+    const key = `${e.camion}||${viaje}`;
+    byGrupo[key] = byGrupo[key] || { camion:e.camion, viaje, clientes:0, totalBoleta:0, totalCobrado:0, tipos:{} };
+    byGrupo[key].clientes++;
+    byGrupo[key].totalBoleta += (e.montoBoleta||0);
+    if(e.estado === 'entregado') byGrupo[key].totalCobrado += (e.totalCobrado ?? e.montoBoleta ?? 0);
+    const envases = e.envases || {};
+    Object.keys(envases).forEach(tipo=>{
+      byGrupo[key].tipos[tipo] = byGrupo[key].tipos[tipo] || {prestado:0, devuelto:0, vendidoBotellas:0};
+      byGrupo[key].tipos[tipo].prestado += envases[tipo].prestaron||0;
+      byGrupo[key].tipos[tipo].devuelto += envases[tipo].devolvieron||0;
+      byGrupo[key].tipos[tipo].vendidoBotellas += envases[tipo].vendieron||0;
+    });
+  });
+  return Object.values(byGrupo).sort((a,b)=> a.camion.localeCompare(b.camion) || a.viaje-b.viaje);
+}
+
+async function verDiaAnterior(){
+  const fecha = document.getElementById('historialFecha').value;
+  const resultEl = document.getElementById('historialDiaResultado');
+  if(!fecha){ toast('Elegí una fecha'); return; }
+  resultEl.innerHTML = `<div class="sub">Buscando...</div>`;
+  const { db, collection, query, where, getDocs } = window.__fb;
+  const snap = await getDocs(query(collection(db,'entregas'), where('fecha','==',fecha)));
+  const entregas = snap.docs.map(d=>d.data());
+  if(!entregas.length){
+    resultEl.innerHTML = `<div class="sub">No hay entregas guardadas para el ${fecha} (o ya fueron archivadas — mirá "Resúmenes archivados" más abajo).</div>`;
+    return;
+  }
+  const grupos = agruparEntregasPorViaje(entregas);
+  resultEl.innerHTML = grupos.map(g=>`
+    <div style="border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:10px;">
+      <div style="font-weight:700;">${g.camion} · Viaje ${g.viaje}</div>
+      <div class="sub" style="margin:2px 0 0;">${g.clientes} clientes · $${g.totalBoleta.toLocaleString('es-AR')} en boletas · $${g.totalCobrado.toLocaleString('es-AR')} cobrado</div>
+      <div class="sub" style="margin:4px 0 0;">${TIPOS_ENVASE.map(t=>{
+        const d = g.tipos[t] || {prestado:0, devuelto:0, vendidoBotellas:0};
+        return `${t} — prestado: ${formatCajones(t,d.prestado)}, devuelto: ${formatCajones(t,d.devuelto)}, vendido: ${d.vendidoBotellas||0} botellas`;
+      }).join(' · ')}</div>
+    </div>
+  `).join('');
+}
+
+async function archivarRepartosViejos(){
+  const dias = parseInt(document.getElementById('diasArchivar').value) || 60;
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - dias);
+  const cutoffStr = `${cutoff.getFullYear()}-${String(cutoff.getMonth()+1).padStart(2,'0')}-${String(cutoff.getDate()).padStart(2,'0')}`;
+
+  const confirmado = confirm(`Esto va a resumir y borrar el detalle de todos los repartos anteriores al ${cutoffStr}. Los resúmenes quedan guardados para siempre, pero el detalle de cada entrega (pagos, observaciones, etc.) no se va a poder recuperar después. ¿Continuar?`);
+  if(!confirmado) return;
+
+  const btn = document.getElementById('archivarBtn');
+  const resultEl = document.getElementById('archivarResultado');
+  btn.disabled = true;
+  btn.textContent = 'Archivando...';
+  resultEl.textContent = 'Buscando repartos viejos...';
+
+  try {
+    const { db, collection, query, where, getDocs, doc, setDoc, writeBatch } = window.__fb;
+    const snap = await getDocs(query(collection(db,'entregas'), where('fecha','<', cutoffStr)));
+    const entregas = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    if(!entregas.length){
+      resultEl.textContent = 'No hay repartos tan viejos para archivar.';
+      btn.disabled = false; btn.textContent = 'Archivar ahora';
+      return;
+    }
+
+    // Agrupar por fecha + camión + viaje, para armar un resumen por viaje
+    const porGrupo = {};
+    entregas.forEach(e=>{
+      const viaje = e.viaje || 1;
+      const key = `${e.fecha}_${e.camion}_v${viaje}`;
+      porGrupo[key] = porGrupo[key] || { fecha:e.fecha, camion:e.camion, viaje, clientes:0, totalBoleta:0, totalCobrado:0, pagos:{efectivo:0,transferencia:0,qr:0}, tipos:{} };
+      const g = porGrupo[key];
+      g.clientes++;
+      g.totalBoleta += (e.montoBoleta||0);
+      if(e.estado === 'entregado'){
+        const totalReal = e.totalCobrado ?? e.montoBoleta ?? 0;
+        g.totalCobrado += totalReal;
+        if(e.formaPago === 'mixto'){
+          g.pagos.efectivo += (e.montos?.efectivo||0);
+          g.pagos.transferencia += (e.montos?.transferencia||0);
+          g.pagos.qr += (e.montos?.qr||0);
+        } else if(['efectivo','transferencia','qr'].includes(e.formaPago)){
+          g.pagos[e.formaPago] += totalReal;
+        }
+      }
+      const envases = e.envases || {};
+      Object.keys(envases).forEach(tipo=>{
+        g.tipos[tipo] = g.tipos[tipo] || {prestado:0, devuelto:0, vendidoBotellas:0};
+        g.tipos[tipo].prestado += envases[tipo].prestaron||0;
+        g.tipos[tipo].devuelto += envases[tipo].devolvieron||0;
+        g.tipos[tipo].vendidoBotellas += envases[tipo].vendieron||0;
+      });
+    });
+
+    resultEl.textContent = `Guardando ${Object.keys(porGrupo).length} resúmenes...`;
+    const gruposKeys = Object.keys(porGrupo);
+    for(let i=0; i<gruposKeys.length; i+=450){
+      const lote = gruposKeys.slice(i, i+450);
+      const batch = writeBatch(db);
+      lote.forEach(key=>{
+        batch.set(doc(db,'resumenes_repartos', key), porGrupo[key]);
+      });
+      await batch.commit();
+    }
+
+    resultEl.textContent = `Borrando ${entregas.length} entregas y sus cargas de camión...`;
+    const cargasKeys = new Set(entregas.map(e=> `${e.fecha}_${e.camion}_v${e.viaje||1}`));
+    for(let i=0; i<entregas.length; i+=450){
+      const lote = entregas.slice(i, i+450);
+      const batch = writeBatch(db);
+      lote.forEach(e=> batch.delete(doc(db,'entregas', e.id)));
+      await batch.commit();
+    }
+    const cargasArr = [...cargasKeys];
+    for(let i=0; i<cargasArr.length; i+=450){
+      const lote = cargasArr.slice(i, i+450);
+      const batch = writeBatch(db);
+      lote.forEach(key=> batch.delete(doc(db,'cargas_camion', key)));
+      await batch.commit();
+    }
+
+    resultEl.textContent = `Listo: se archivaron ${Object.keys(porGrupo).length} viajes (${entregas.length} entregas) de antes del ${cutoffStr}.`;
+    toast('Repartos viejos archivados');
+    cargarResumenesArchivados();
+  } catch(err){
+    console.error(err);
+    resultEl.textContent = 'Hubo un error al archivar: ' + (err.code || err.message || err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Archivar ahora';
+  }
+}
+
+async function cargarResumenesArchivados(){
+  const tbody = document.getElementById('resumenesTable');
+  if(!tbody) return;
+  const { db, collection, query, orderBy, limit, getDocs } = window.__fb;
+  try {
+    const snap = await getDocs(query(collection(db,'resumenes_repartos'), orderBy('fecha','desc'), limit(100)));
+    const resumenes = snap.docs.map(d=>d.data());
+    tbody.innerHTML = resumenes.map(r=>`
+      <tr>
+        <td>${r.fecha}</td>
+        <td>${r.camion}</td>
+        <td>${r.viaje}</td>
+        <td>${r.clientes}</td>
+        <td>$${(r.totalCobrado||0).toLocaleString('es-AR')}</td>
+      </tr>
+    `).join('') || `<tr><td colspan="5" style="color:var(--ink-soft);">Todavía no archivaste ningún reparto.</td></tr>`;
+  } catch(err){
+    console.error(err);
+    tbody.innerHTML = `<tr><td colspan="5" style="color:var(--ink-soft);">No se pudo cargar (${err.code||err.message}).</td></tr>`;
+  }
 }
 
 async function renderEnvases(){
@@ -1600,7 +1814,8 @@ Object.assign(window, {
   openAnticipoSheet, closeAnticipoSheet, selectAnticipoTipo, guardarAnticipo, quitarAnticipo,
   openEditarBoletaSheet, closeEditarBoletaSheet, guardarEditarBoleta,
   guardarCargaInicial, eliminarViaje, quitarClienteDeViaje, renderClientesTab, renderEnvasesTabla, toggleHistorial,
-  guardarPrecioEnvase, actualizarTotalACobrar
+  guardarPrecioEnvase, actualizarTotalACobrar,
+  verDiaAnterior, archivarRepartosViejos, cargarResumenesArchivados
 });
 </script>
 </body>
