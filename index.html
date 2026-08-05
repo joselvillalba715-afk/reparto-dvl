@@ -492,10 +492,12 @@ function formatCajones(tipo, cantidad){
   const totalBotellas = Math.round(Math.abs(cantidad) * por);
   const cajones = Math.floor(totalBotellas / por);
   const botellas = totalBotellas % por;
+  const txtCajones = cajones===1 ? '1 cajón' : `${cajones} cajones`;
+  const txtBotellas = botellas===1 ? '1 botella' : `${botellas} botellas`;
   let texto;
-  if(cajones && botellas) texto = `${cajones} cajones + ${botellas} botellas`;
-  else if(cajones) texto = `${cajones} cajones`;
-  else texto = `${botellas} botellas`;
+  if(cajones && botellas) texto = `${txtCajones} + ${txtBotellas}`;
+  else if(cajones) texto = txtCajones;
+  else texto = txtBotellas;
   return negativo ? `-${texto}` : texto;
 }
 
@@ -1039,8 +1041,7 @@ function envLabel(e){
   const tipos = Object.keys(envases);
   if(!tipos.length) return '—';
   return tipos.map(tipo=>{
-    const por = BOTELLAS_POR_CAJON[tipo] || 1;
-    const debe = (envases[tipo].prestaron||0) - (envases[tipo].devolvieron||0) - ((envases[tipo].vendieron||0)/por);
+    const debe = (envases[tipo].prestaron||0) - (envases[tipo].devolvieron||0);
     return debe>0
       ? `<span class="badge debe">${tipo}: debe ${formatCajones(tipo, debe)}</span>`
       : `<span class="badge ok">${tipo}: completo</span>`;
@@ -1834,9 +1835,8 @@ async function confirmarEntrega(){
         const nuevoDebeDesde = {...debeDesdeActual};
         const movimientosEntrega = {};
         tiposAfectados.forEach(tipo=>{
-          const por = BOTELLAS_POR_CAJON[tipo] || 1;
-          const diffPrevio = (envasesPrevios[tipo]?.prestaron||0) - (envasesPrevios[tipo]?.devolvieron||0) - ((envasesPrevios[tipo]?.vendieron||0)/por);
-          const diffNuevo = (envases[tipo]?.prestaron||0) - (envases[tipo]?.devolvieron||0) - ((envases[tipo]?.vendieron||0)/por);
+          const diffPrevio = (envasesPrevios[tipo]?.prestaron||0) - (envasesPrevios[tipo]?.devolvieron||0);
+          const diffNuevo = (envases[tipo]?.prestaron||0) - (envases[tipo]?.devolvieron||0);
           const saldoAnterior = nuevoSaldo[tipo] || 0;
           nuevoSaldo[tipo] = saldoAnterior - diffPrevio + diffNuevo;
           if(nuevoSaldo[tipo] > 0 && saldoAnterior <= 0){
