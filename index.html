@@ -341,7 +341,7 @@
         <textarea id="obsInput" style="min-height:70px; font-family:var(--sans); font-size:14px;" placeholder="Ej: quedan debiendo 2 cajones, vuelven la semana que viene"></textarea>
       </div>
 
-      <button class="btn btn-primary btn-block" onclick="confirmarEntrega()">Confirmar entrega</button>
+      <button class="btn btn-primary btn-block" id="confirmarEntregaBtn" onclick="confirmarEntrega()">Confirmar entrega</button>
     </div>
   </div>
 </div>
@@ -1399,6 +1399,9 @@ function actualizarTotalACobrar(){
 
 function llenarSheet(e){
   selectedPago = null;
+  const confirmarBtn = document.getElementById('confirmarEntregaBtn');
+  confirmarBtn.disabled = false;
+  confirmarBtn.textContent = 'Confirmar entrega';
   document.getElementById('sheetClientName').textContent = e.nombre;
   document.getElementById('sheetClientAddr').textContent = e.direccion || '';
 
@@ -1425,11 +1428,18 @@ function llenarSheet(e){
 
   document.getElementById('envaseInputs').innerHTML = TIPOS_ENVASE.map((tipo, i)=>`
     <div style="border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:10px;">
-      <div style="font-weight:700; color:var(--ink); margin-bottom:6px;">${tipo}</div>
-      <div class="row" style="align-items:flex-end;">
-        <div><label style="margin-bottom:2px;">Prestaron</label><input type="number" min="0" step="0.5" id="env_prestaron_${i}" placeholder="0" oninput="actualizarTotalACobrar()" style="width:70px;"></div>
-        <div><label style="margin-bottom:2px;">Devolvieron</label><input type="number" min="0" step="0.5" id="env_devolvieron_${i}" placeholder="0" oninput="actualizarTotalACobrar()" style="width:70px;"></div>
-        <div><label style="margin-bottom:2px;">Vendieron (botellas)</label><input type="number" min="0" id="env_vendieron_${i}" placeholder="0" oninput="actualizarTotalACobrar()" style="width:80px;"></div>
+      <div style="font-weight:700; color:var(--ink); margin-bottom:8px;">${tipo}</div>
+      <div class="field" style="margin-bottom:8px;">
+        <label>Prestaron</label>
+        <input type="number" min="0" step="0.5" id="env_prestaron_${i}" placeholder="0" oninput="actualizarTotalACobrar()">
+      </div>
+      <div class="field" style="margin-bottom:8px;">
+        <label>Devolvieron</label>
+        <input type="number" min="0" step="0.5" id="env_devolvieron_${i}" placeholder="0" oninput="actualizarTotalACobrar()">
+      </div>
+      <div class="field" style="margin-bottom:0;">
+        <label>Vendieron (botellas sueltas)</label>
+        <input type="number" min="0" id="env_vendieron_${i}" placeholder="0" oninput="actualizarTotalACobrar()">
       </div>
     </div>
   `).join('');
@@ -1492,6 +1502,8 @@ function selectPago(tipo){
 }
 async function confirmarEntrega(){
   if(!selectedPago){ toast('Elegí una forma de pago'); return; }
+  const btn = document.getElementById('confirmarEntregaBtn');
+  if(btn.disabled) return; // evita doble toque mientras está guardando
   const envases = {};
   TIPOS_ENVASE.forEach((tipo, i)=>{
     const prestaron = parseFloat(document.getElementById(`env_prestaron_${i}`).value)||0;
@@ -1514,59 +1526,70 @@ async function confirmarEntrega(){
   const { db, doc, updateDoc, getDoc, runTransaction } = window.__fb;
   const entregaRef = doc(db,'entregas',activeEntregaId);
 
-  // Si se está corrigiendo una entrega ya confirmada, primero deshacemos el movimiento
-  // de envases que había quedado cargado, para no duplicar el saldo del cliente.
-  const prevSnap = await getDoc(entregaRef);
-  const envasesPrevios = prevSnap.exists() ? (prevSnap.data().envases || {}) : {};
+  btn.disabled = true;
+  btn.textContent = 'Guardando...';
 
-  await updateDoc(entregaRef, {
-    estado:'entregado', formaPago:selectedPago, montos, envases, montoBoleta, descuento, totalCobrado,
-    observaciones, horaEntrega: new Date().toISOString()
-  });
+  try {
+    // Si se está corrigiendo una entrega ya confirmada, primero deshacemos el movimiento
+    // de envases que había quedado cargado, para no duplicar el saldo del cliente.
+    const prevSnap = await getDoc(entregaRef);
+    const envasesPrevios = prevSnap.exists() ? (prevSnap.data().envases || {}) : {};
 
-  // Recalcula el saldo de envases del cliente: resta el movimiento viejo, suma el nuevo
-  // (tanto lo devuelto físicamente como lo vendido — en botellas — saldan la deuda del cliente)
-  const tiposAfectados = new Set([...Object.keys(envasesPrevios), ...Object.keys(envases)]);
-  if(tiposAfectados.size){
-    const clienteRef = doc(db,'clientes_reparto', activeClienteId);
-    const fechaHoy = todayStr();
-    await runTransaction(db, async (tx)=>{
-      const snap = await tx.get(clienteRef);
-      const saldoActual = snap.exists() ? (snap.data().envaseSaldo||{}) : {};
-      const debeDesdeActual = snap.exists() ? (snap.data().envaseDebeDesde||{}) : {};
-      const historialActual = snap.exists() ? (snap.data().envaseHistorial||{}) : {};
-      const nuevoSaldo = {...saldoActual};
-      const nuevoDebeDesde = {...debeDesdeActual};
-      const movimientosEntrega = {};
-      tiposAfectados.forEach(tipo=>{
-        const por = BOTELLAS_POR_CAJON[tipo] || 1;
-        const diffPrevio = (envasesPrevios[tipo]?.prestaron||0) - (envasesPrevios[tipo]?.devolvieron||0) - ((envasesPrevios[tipo]?.vendieron||0)/por);
-        const diffNuevo = (envases[tipo]?.prestaron||0) - (envases[tipo]?.devolvieron||0) - ((envases[tipo]?.vendieron||0)/por);
-        const saldoAnterior = nuevoSaldo[tipo] || 0;
-        nuevoSaldo[tipo] = saldoAnterior - diffPrevio + diffNuevo;
-        if(nuevoSaldo[tipo] > 0 && saldoAnterior <= 0){
-          // recién empieza a deber este producto
-          nuevoDebeDesde[tipo] = fechaHoy;
-        } else if(nuevoSaldo[tipo] <= 0){
-          // quedó saldado, se borra la fecha de inicio de deuda
-          delete nuevoDebeDesde[tipo];
-        }
-        if(envases[tipo] && (envases[tipo].prestaron || envases[tipo].devolvieron || envases[tipo].vendieron)){
-          movimientosEntrega[tipo] = { prestaron: envases[tipo].prestaron||0, devolvieron: envases[tipo].devolvieron||0, vendieron: envases[tipo].vendieron||0 };
-        }
-      });
-      // un registro de historial por entrega — si se corrige, se reemplaza en vez de duplicar
-      const nuevoHistorial = {...historialActual};
-      if(Object.keys(movimientosEntrega).length){
-        nuevoHistorial[activeEntregaId] = { fecha: fechaHoy, movimientos: movimientosEntrega };
-      } else {
-        delete nuevoHistorial[activeEntregaId];
-      }
-      tx.update(clienteRef, { envaseSaldo: nuevoSaldo, envaseDebeDesde: nuevoDebeDesde, envaseHistorial: nuevoHistorial });
+    await updateDoc(entregaRef, {
+      estado:'entregado', formaPago:selectedPago, montos, envases, montoBoleta, descuento, totalCobrado,
+      observaciones, horaEntrega: new Date().toISOString()
     });
+
+    // Recalcula el saldo de envases del cliente: resta el movimiento viejo, suma el nuevo
+    // (tanto lo devuelto físicamente como lo vendido — en botellas — saldan la deuda del cliente)
+    const tiposAfectados = new Set([...Object.keys(envasesPrevios), ...Object.keys(envases)]);
+    if(tiposAfectados.size){
+      const clienteRef = doc(db,'clientes_reparto', activeClienteId);
+      const fechaHoy = todayStr();
+      await runTransaction(db, async (tx)=>{
+        const snap = await tx.get(clienteRef);
+        const saldoActual = snap.exists() ? (snap.data().envaseSaldo||{}) : {};
+        const debeDesdeActual = snap.exists() ? (snap.data().envaseDebeDesde||{}) : {};
+        const historialActual = snap.exists() ? (snap.data().envaseHistorial||{}) : {};
+        const nuevoSaldo = {...saldoActual};
+        const nuevoDebeDesde = {...debeDesdeActual};
+        const movimientosEntrega = {};
+        tiposAfectados.forEach(tipo=>{
+          const por = BOTELLAS_POR_CAJON[tipo] || 1;
+          const diffPrevio = (envasesPrevios[tipo]?.prestaron||0) - (envasesPrevios[tipo]?.devolvieron||0) - ((envasesPrevios[tipo]?.vendieron||0)/por);
+          const diffNuevo = (envases[tipo]?.prestaron||0) - (envases[tipo]?.devolvieron||0) - ((envases[tipo]?.vendieron||0)/por);
+          const saldoAnterior = nuevoSaldo[tipo] || 0;
+          nuevoSaldo[tipo] = saldoAnterior - diffPrevio + diffNuevo;
+          if(nuevoSaldo[tipo] > 0 && saldoAnterior <= 0){
+            // recién empieza a deber este producto
+            nuevoDebeDesde[tipo] = fechaHoy;
+          } else if(nuevoSaldo[tipo] <= 0){
+            // quedó saldado, se borra la fecha de inicio de deuda
+            delete nuevoDebeDesde[tipo];
+          }
+          if(envases[tipo] && (envases[tipo].prestaron || envases[tipo].devolvieron || envases[tipo].vendieron)){
+            movimientosEntrega[tipo] = { prestaron: envases[tipo].prestaron||0, devolvieron: envases[tipo].devolvieron||0, vendieron: envases[tipo].vendieron||0 };
+          }
+        });
+        // un registro de historial por entrega — si se corrige, se reemplaza en vez de duplicar
+        const nuevoHistorial = {...historialActual};
+        if(Object.keys(movimientosEntrega).length){
+          nuevoHistorial[activeEntregaId] = { fecha: fechaHoy, movimientos: movimientosEntrega };
+        } else {
+          delete nuevoHistorial[activeEntregaId];
+        }
+        tx.update(clienteRef, { envaseSaldo: nuevoSaldo, envaseDebeDesde: nuevoDebeDesde, envaseHistorial: nuevoHistorial });
+      });
+    }
+    btn.textContent = '✓ Guardado';
+    toast('Entrega guardada correctamente');
+    setTimeout(closeSheet, 500);
+  } catch(err){
+    console.error('Error al confirmar entrega:', err);
+    alert('No se pudo guardar la entrega.\n\nError: ' + (err.code || err.message || err) + '\n\nSacale una captura a este mensaje y mandásela al administrador.');
+    btn.disabled = false;
+    btn.textContent = 'Confirmar entrega';
   }
-  toast('Entrega guardada');
-  closeSheet();
 }
 
 // exponer funciones usadas en HTML inline
