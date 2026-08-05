@@ -203,27 +203,43 @@
     <!-- ARMAR RUTAS -->
     <div id="tab-rutas" class="hidden">
       <div class="card">
-        <h2>Buscar clientes para agregar al reparto</h2>
-        <div class="sub">Escribí nombre, número o dirección para encontrarlo entre todos tus clientes, y asignale un camión y un N° de viaje para hoy.</div>
-        <div class="field" style="max-width:220px;">
-          <label>Fecha</label>
-          <input type="date" id="rutaFecha" onchange="renderRutas()">
+        <h2>Reparto a armar</h2>
+        <div class="sub">Elegí la fecha, el camión y el N° de viaje una sola vez — todos los clientes que agregues abajo van a ese mismo reparto.</div>
+        <div class="row" style="max-width:520px; align-items:flex-end; flex-wrap:wrap;">
+          <div class="field" style="margin-bottom:0;">
+            <label>Fecha</label>
+            <input type="date" id="rutaFecha" onchange="renderRutas()">
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label>Camión</label>
+            <select id="rutaCamionGlobal" onchange="onCambioCamionGlobal()"></select>
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label>N° de viaje</label>
+            <input type="number" min="1" id="rutaViajeGlobal" value="1" style="width:80px;" onchange="onCambioCamionGlobal()">
+          </div>
         </div>
+      </div>
+
+      <div class="card">
+        <h2>Buscar clientes para agregar</h2>
         <div class="field">
           <label>Buscar cliente</label>
           <input type="text" id="rutaSearch" placeholder="Nombre, número o dirección..." oninput="renderBusquedaRutas()">
         </div>
         <div id="rutaSearchResults"></div>
       </div>
+
       <div class="card">
         <h2>Reparto de hoy</h2>
-        <div class="sub">Por cada cliente: camión, N° de viaje, y monto de la boleta. Los envases (préstamos, devoluciones y ventas de botellas) los carga el chofer cuando llega a cada cliente.</div>
+        <div class="sub">Por cada cliente: monto de la boleta y cajones que le prestás (opcional). Lo que devuelva, venda, o si el préstamo cambia en el momento, lo carga el chofer al entregar.</div>
         <div class="sub" id="rutaSeleccionCount"></div>
         <div id="rutaSeleccionados"></div>
       </div>
+
       <div class="card">
         <h2>Carga inicial de cajones</h2>
-        <div class="sub">Un solo total por camión/viaje — no hace falta cargarlo por cliente. Se guarda junto con el reparto al confirmar.</div>
+        <div class="sub">Cuántos cajones de cada producto salen del depósito con este camión en este viaje.</div>
         <div id="cargaInicialRuta"></div>
         <button class="btn btn-primary" style="margin-top:10px;" onclick="guardarRutaDelDia()">Confirmar reparto del día</button>
       </div>
@@ -908,13 +924,29 @@ async function borrarTodosClientes(){
    ARMAR RUTA DEL DÍA — búsqueda + asignación de camión y viaje en el momento
    ======================================================================= */
 let rutaSeleccion = new Set();
-let selectedCamion = {}; // { clienteId: 'Camion 2' } — camión elegido para hoy
-let selectedViaje = {};  // { clienteId: 1 } — n° de viaje/reparto de hoy
 let selectedMontoBoleta = {}; // { clienteId: 15000 } — monto de la boleta cargado al armar la ruta
+let selectedPrestamo = {};    // { clienteId: { 'Coca-Cola': 4 } } — cajones que se le prestan a cada cliente
 
 function renderRutas(){
+  poblarCamionGlobal();
   renderBusquedaRutas();
   renderSeleccionados();
+  renderCargaInicialRuta();
+}
+
+function poblarCamionGlobal(){
+  const sel = document.getElementById('rutaCamionGlobal');
+  if(!sel) return;
+  const valorPrevio = sel.value;
+  const opciones = CAMIONES.length ? CAMIONES : [];
+  sel.innerHTML = opciones.length
+    ? opciones.map(op=>`<option value="${op}">${op}</option>`).join('')
+    : `<option value="">(no hay choferes dados de alta todavía)</option>`;
+  if(valorPrevio && opciones.includes(valorPrevio)) sel.value = valorPrevio;
+}
+
+function onCambioCamionGlobal(){
+  renderCargaInicialRuta();
 }
 
 function renderBusquedaRutas(){
@@ -948,81 +980,62 @@ function renderSeleccionados(){
   const el = document.getElementById('rutaSeleccionados');
   if(!el) return;
   const seleccionados = CLIENTES.filter(c => rutaSeleccion.has(c.id));
-  document.getElementById('rutaSeleccionCount').textContent = `${seleccionados.length} clientes en el reparto de hoy`;
-  const opcionesCamion = CAMIONES.length ? CAMIONES : ['(no hay choferes dados de alta todavía)'];
+  document.getElementById('rutaSeleccionCount').textContent = `${seleccionados.length} clientes en este reparto`;
   el.innerHTML = seleccionados.map(c=>{
-    if(!selectedCamion[c.id]) selectedCamion[c.id] = opcionesCamion[0];
-    if(!selectedViaje[c.id]) selectedViaje[c.id] = 1;
+    if(!selectedPrestamo[c.id]) selectedPrestamo[c.id] = {};
     return `
     <div style="display:flex; align-items:flex-end; gap:8px; flex-wrap:wrap; padding:9px 0; border-bottom:1px solid #ece9df;">
       <div style="flex:1; min-width:160px; font-size:14px; padding-bottom:6px;"><b>${c.nombre}</b><br><span style="color:var(--ink-soft); font-size:12px;">${c.direccion||''}</span></div>
-      <label class="field-mini"><span>Camión</span>
-        <select class="camionSelectRow" data-cliente="${c.id}" style="width:auto; font-size:12.5px; padding:6px 8px;">
-          ${opcionesCamion.map(op=>`<option value="${op}" ${selectedCamion[c.id]===op?'selected':''}>${op}</option>`).join('')}
-        </select>
-      </label>
-      <label class="field-mini"><span>N° viaje</span>
-        <input type="number" min="1" class="viajeInputRow" data-cliente="${c.id}" value="${selectedViaje[c.id]}" style="width:56px; font-size:12.5px; padding:6px 8px;">
-      </label>
       <label class="field-mini"><span>$ Boleta</span>
         <input type="number" min="0" class="boletaInputRow" data-cliente="${c.id}" value="${selectedMontoBoleta[c.id] || ''}" placeholder="0" style="width:90px; font-size:12.5px; padding:6px 8px;">
       </label>
+      ${TIPOS_ENVASE.map(tipo=>`
+        <label class="field-mini"><span>${tipo}</span>
+          <input type="number" min="0" step="0.5" class="prestamoInputRow" data-cliente="${c.id}" data-tipo="${tipo}" value="${selectedPrestamo[c.id][tipo] || ''}" placeholder="0" style="width:70px; font-size:12.5px; padding:6px 8px;">
+        </label>
+      `).join('')}
       <button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="quitarDeRuta('${c.id}')">Quitar</button>
     </div>`;
   }).join('') || `<div class="sub">Todavía no agregaste clientes. Buscalos arriba.</div>`;
 
-  document.querySelectorAll('.camionSelectRow').forEach(sel=>{
-    sel.addEventListener('change', ()=>{ selectedCamion[sel.dataset.cliente] = sel.value; renderCargaInicialRuta(); });
-  });
-  document.querySelectorAll('.viajeInputRow').forEach(inp=>{
-    inp.addEventListener('change', ()=>{ selectedViaje[inp.dataset.cliente] = parseInt(inp.value) || 1; renderCargaInicialRuta(); });
-  });
   document.querySelectorAll('.boletaInputRow').forEach(inp=>{
     inp.addEventListener('change', ()=>{ selectedMontoBoleta[inp.dataset.cliente] = parseFloat(inp.value) || 0; });
   });
-  renderCargaInicialRuta();
+  document.querySelectorAll('.prestamoInputRow').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const cid = inp.dataset.cliente, tipo = inp.dataset.tipo;
+      if(!selectedPrestamo[cid]) selectedPrestamo[cid] = {};
+      selectedPrestamo[cid][tipo] = parseFloat(inp.value) || 0;
+    });
+  });
 }
 
-let cargaInicialRuta = {}; // { "Camion 1||1": { 'Coca-Cola': 150, 'Cerveza': 15 } }
+let cargaInicialRuta = {}; // { 'Coca-Cola': 150, 'Cerveza': 15 } — para el camión/viaje elegidos arriba
 
 async function renderCargaInicialRuta(){
   const el = document.getElementById('cargaInicialRuta');
   if(!el) return;
-  const fecha = document.getElementById('rutaFecha').value || todayStr();
-  const combos = new Set();
-  rutaSeleccion.forEach(cid => {
-    const camion = selectedCamion[cid];
-    const viaje = selectedViaje[cid] || 1;
-    if(camion) combos.add(`${camion}||${viaje}`);
-  });
-  if(!combos.size){
-    el.innerHTML = `<div class="sub">Agregá clientes arriba para ver por qué camión/viaje cargar el total.</div>`;
+  const camion = document.getElementById('rutaCamionGlobal')?.value;
+  const viaje = parseInt(document.getElementById('rutaViajeGlobal')?.value) || 1;
+  if(!camion){
+    el.innerHTML = `<div class="sub">Elegí un camión arriba primero.</div>`;
     return;
   }
+  const fecha = document.getElementById('rutaFecha').value || todayStr();
   const { db, doc, getDoc } = window.__fb;
-  el.innerHTML = (await Promise.all([...combos].sort().map(async key=>{
-    const [camion, viaje] = key.split('||');
-    if(!cargaInicialRuta[key]){
-      const snap = await getDoc(doc(db,'cargas_camion', `${fecha}_${camion}_v${viaje}`));
-      cargaInicialRuta[key] = snap.exists() ? {...snap.data()} : {};
-    }
-    return `
-      <div style="border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:8px;">
-        <div style="font-weight:700; margin-bottom:6px;">${camion} · Viaje ${viaje}</div>
-        <div class="row" style="align-items:flex-end;">
-          ${TIPOS_ENVASE.map(tipo=>`
-            <label class="field-mini"><span>${tipo}</span>
-              <input type="number" min="0" step="0.5" class="cargaInicialInput" data-key="${key}" data-tipo="${tipo}" value="${cargaInicialRuta[key][tipo] || ''}" placeholder="0" style="width:90px;">
-            </label>
-          `).join('')}
-        </div>
-      </div>`;
-  }))).join('');
+  const snap = await getDoc(doc(db,'cargas_camion', `${fecha}_${camion}_v${viaje}`));
+  cargaInicialRuta = snap.exists() ? {...snap.data()} : {};
+  el.innerHTML = `
+    <div class="row" style="align-items:flex-end;">
+      ${TIPOS_ENVASE.map(tipo=>`
+        <label class="field-mini"><span>${tipo}</span>
+          <input type="number" min="0" step="0.5" class="cargaInicialInput" data-tipo="${tipo}" value="${cargaInicialRuta[tipo] || ''}" placeholder="0" style="width:90px;">
+        </label>
+      `).join('')}
+    </div>`;
   document.querySelectorAll('.cargaInicialInput').forEach(inp=>{
     inp.addEventListener('change', ()=>{
-      const key = inp.dataset.key, tipo = inp.dataset.tipo;
-      if(!cargaInicialRuta[key]) cargaInicialRuta[key] = {};
-      cargaInicialRuta[key][tipo] = parseFloat(inp.value) || 0;
+      cargaInicialRuta[inp.dataset.tipo] = parseFloat(inp.value) || 0;
     });
   });
 }
@@ -1034,37 +1047,38 @@ function quitarDeRuta(clienteId){
 
 async function guardarRutaDelDia(){
   const fecha = document.getElementById('rutaFecha').value || todayStr();
+  const camion = document.getElementById('rutaCamionGlobal')?.value;
+  const viaje = parseInt(document.getElementById('rutaViajeGlobal')?.value) || 1;
+  if(!camion){ toast('Primero dá de alta al menos un chofer con su camión asignado'); return; }
   if(rutaSeleccion.size === 0){ toast('Agregá al menos un cliente'); return; }
-  if(!CAMIONES.length){ toast('Primero dá de alta al menos un chofer con su camión asignado'); return; }
   const { db, doc, setDoc } = window.__fb;
   const batchWrites = [];
   for(const clienteId of rutaSeleccion){
     const cliente = CLIENTES.find(c=>c.id===clienteId);
     if(!cliente) continue;
-    const camion = selectedCamion[clienteId] || CAMIONES[0];
-    const viaje = selectedViaje[clienteId] || 1;
     const montoBoleta = selectedMontoBoleta[clienteId] || 0;
+    const pedido = selectedPrestamo[clienteId] || {};
+    const envases = {};
+    TIPOS_ENVASE.forEach(tipo => {
+      if(pedido[tipo]) envases[tipo] = { prestaron: pedido[tipo], devolvieron: 0, vendieron: 0 };
+    });
     const entregaId = `${fecha}_${clienteId}_v${viaje}`;
     batchWrites.push(setDoc(doc(db,'entregas',entregaId), {
       fecha, viaje, clienteId, nombre:cliente.nombre, direccion:cliente.direccion||'',
       numero:cliente.numero||'', telefono:cliente.telefono||'', camion, montoBoleta,
-      estado:'pendiente', formaPago:null, montos:{}, envases:{},
+      estado:'pendiente', formaPago:null, montos:{}, envases,
       envaseSaldoAlSalir: cliente.envaseSaldo || {},
       observaciones:'', horaEntrega:null
     }, {merge:true}));
   }
-  // Guarda la carga inicial (total de cajones) de cada camión/viaje involucrado
-  Object.keys(cargaInicialRuta).forEach(key=>{
-    const [camion, viaje] = key.split('||');
-    const valores = cargaInicialRuta[key];
-    if(valores && Object.keys(valores).length){
-      batchWrites.push(setDoc(doc(db,'cargas_camion', `${fecha}_${camion}_v${viaje}`), valores, {merge:true}));
-    }
-  });
+  if(Object.keys(cargaInicialRuta).length){
+    batchWrites.push(setDoc(doc(db,'cargas_camion', `${fecha}_${camion}_v${viaje}`), cargaInicialRuta, {merge:true}));
+  }
   await Promise.all(batchWrites);
-  toast(`Reparto del ${fecha} confirmado: ${rutaSeleccion.size} clientes`);
+  toast(`${camion} · Viaje ${viaje} confirmado: ${rutaSeleccion.size} clientes`);
   rutaSeleccion.clear();
-  cargaInicialRuta = {};
+  selectedMontoBoleta = {};
+  selectedPrestamo = {};
   renderDashboard();
   renderRutas();
 }
@@ -1079,13 +1093,6 @@ async function renderDashboard(){
   const q = query(collection(db,'entregas'), where('fecha','==',fecha));
   onSnapshot(q, (snap)=>{
     const entregas = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    const total = entregas.length;
-    const hechos = entregas.filter(e=>e.estado==='entregado').length;
-    document.getElementById('dashSummary').innerHTML = `
-      <div style="display:flex; gap:24px; flex-wrap:wrap;">
-        <div><div style="font-size:26px; font-weight:700;">${hechos}/${total}</div><div class="sub" style="margin:0;">entregados</div></div>
-        <div><div style="font-size:26px; font-weight:700;">${total-hechos}</div><div class="sub" style="margin:0;">pendientes</div></div>
-      </div>`;
     const byGrupo = {};
     entregas.forEach(e=>{
       const viaje = e.viaje || 1;
@@ -1093,6 +1100,20 @@ async function renderDashboard(){
       byGrupo[key] = byGrupo[key] || { camion: e.camion, viaje, lista: [] };
       byGrupo[key].lista.push(e);
     });
+    const gruposOrdenados = Object.keys(byGrupo).sort().map(k=>byGrupo[k]);
+
+    document.getElementById('dashSummary').innerHTML = gruposOrdenados.length
+      ? gruposOrdenados.map(g=>{
+          const hechosG = g.lista.filter(e=>e.estado==='entregado').length;
+          const pendientesG = g.lista.length - hechosG;
+          return `
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #ece9df;">
+            <span style="font-weight:600;">${g.camion} · Viaje ${g.viaje}</span>
+            <span class="sub" style="margin:0;">${hechosG}/${g.lista.length} entregados · <b style="color:${pendientesG>0?'var(--amber)':'var(--green)'};">${pendientesG} pendientes</b></span>
+          </div>`;
+        }).join('')
+      : `<div class="sub">Todavía no armaste ningún reparto hoy.</div>`;
+
     window.__ENTREGAS_HOY_ADMIN = {};
     entregas.forEach(e=> window.__ENTREGAS_HOY_ADMIN[e.id] = e);
     document.getElementById('dashByCamion').innerHTML = Object.keys(byGrupo).sort().map(key=>{
@@ -2137,7 +2158,9 @@ function llenarSheet(e){
   const avisos = [];
   if(e.anticipo){
     const tipoTxt = e.anticipo.tipo === 'total' ? 'Ya transfirió el total' : 'Ya transfirió una parte';
-    avisos.push(`${tipoTxt}: $${e.anticipo.monto}${e.anticipo.nota ? ' — '+e.anticipo.nota : ''}`);
+    const boleta = e.montoBoleta || 0;
+    const saldoPendiente = Math.max(0, boleta - (e.anticipo.monto||0));
+    avisos.push(`${tipoTxt}: $${e.anticipo.monto}${e.anticipo.nota ? ' — '+e.anticipo.nota : ''}<br>Boleta: $${boleta} · Saldo pendiente a cobrar: $${saldoPendiente}`);
   }
   if(deudaTexto){
     avisos.push(`Este cliente debe devolver: ${deudaTexto}`);
@@ -2268,7 +2291,7 @@ async function confirmarEntrega(){
 // exponer funciones usadas en HTML inline
 Object.assign(window, {
   doLogin, logout, switchTab, elegirViaje,
-  importClientes, eliminarCliente, borrarTodosClientes, renderRutas, renderBusquedaRutas, quitarDeRuta, guardarRutaDelDia,
+  importClientes, eliminarCliente, borrarTodosClientes, renderRutas, renderBusquedaRutas, quitarDeRuta, guardarRutaDelDia, onCambioCamionGlobal,
   openSheet, openSheetAdmin, closeSheet, selectPago, confirmarEntrega,
   openAnticipoSheet, closeAnticipoSheet, selectAnticipoTipo, guardarAnticipo, quitarAnticipo,
   openEditarBoletaSheet, closeEditarBoletaSheet, guardarEditarBoleta,
