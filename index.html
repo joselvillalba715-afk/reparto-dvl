@@ -205,7 +205,7 @@
       <div class="card">
         <h2>Reparto a armar</h2>
         <div class="sub">Elegí la fecha, el camión y el N° de viaje una sola vez — todos los clientes que agregues abajo van a ese mismo reparto.</div>
-        <div class="row" style="max-width:520px; align-items:flex-end; flex-wrap:wrap;">
+        <div class="row" style="max-width:640px; align-items:flex-end; flex-wrap:wrap;">
           <div class="field" style="margin-bottom:0;">
             <label>Fecha</label>
             <input type="date" id="rutaFecha" onchange="renderRutas()">
@@ -218,7 +218,13 @@
             <label>N° de viaje</label>
             <input type="number" min="1" id="rutaViajeGlobal" value="1" style="width:80px;" onchange="onCambioCamionGlobal()">
           </div>
+          <div class="field" style="margin-bottom:0;">
+            <label>Chofer que maneja hoy</label>
+            <input type="text" id="rutaChoferNombre" placeholder="Nombre y apellido" list="choferesConocidos" style="width:200px;">
+            <datalist id="choferesConocidos"></datalist>
+          </div>
         </div>
+        <div class="sub" style="margin-top:8px;">Escribí quién maneja este camión hoy — así, si un cliente no se acuerda de haber pedido prestado un cajón, sabemos a quién preguntarle. No hace falta que coincida con el usuario con el que se loguea (el personal cambia).</div>
       </div>
 
       <div class="card">
@@ -624,6 +630,7 @@ let currentRole = null;     // 'admin' | 'driver'
 let currentCamion = null;
 let currentViaje = 1;
 let currentChoferNombre = null; // nombre del chofer logueado, para dejar registro de quién prestó cada envase
+let activeChoferNombre = null;  // nombre del chofer asignado a la entrega que está abierta ahora mismo
 let PRECIO_ENVASE = 2000; // precio por envase vendido cuando al cliente le falta devolver
 let activeClienteId = null;
 let activeEntregaId = null;
@@ -796,10 +803,13 @@ async function loadClientes(){
   CLIENTES = snap.docs.map(d=>({id:d.id, ...d.data()}));
 }
 
+let CHOFERES_CONOCIDOS = [];
+
 async function loadCamiones(){
   const { db, collection, getDocs } = window.__fb;
   const snap = await getDocs(collection(db, 'usuarios'));
   CAMIONES = [...new Set(snap.docs.map(d=>d.data().camion).filter(Boolean))].sort();
+  CHOFERES_CONOCIDOS = [...new Set(snap.docs.map(d=>d.data().nombre).filter(Boolean))].sort();
 }
 
 async function importClientes(){
@@ -943,6 +953,9 @@ function poblarCamionGlobal(){
     ? opciones.map(op=>`<option value="${op}">${op}</option>`).join('')
     : `<option value="">(no hay choferes dados de alta todavía)</option>`;
   if(valorPrevio && opciones.includes(valorPrevio)) sel.value = valorPrevio;
+
+  const datalist = document.getElementById('choferesConocidos');
+  if(datalist) datalist.innerHTML = CHOFERES_CONOCIDOS.map(n=>`<option value="${n}">`).join('');
 }
 
 function onCambioCamionGlobal(){
@@ -1049,6 +1062,7 @@ async function guardarRutaDelDia(){
   const fecha = document.getElementById('rutaFecha').value || todayStr();
   const camion = document.getElementById('rutaCamionGlobal')?.value;
   const viaje = parseInt(document.getElementById('rutaViajeGlobal')?.value) || 1;
+  const choferNombre = document.getElementById('rutaChoferNombre')?.value.trim() || null;
   if(!camion){ toast('Primero dá de alta al menos un chofer con su camión asignado'); return; }
   if(rutaSeleccion.size === 0){ toast('Agregá al menos un cliente'); return; }
   const { db, doc, setDoc } = window.__fb;
@@ -1065,7 +1079,7 @@ async function guardarRutaDelDia(){
     const entregaId = `${fecha}_${clienteId}_v${viaje}`;
     batchWrites.push(setDoc(doc(db,'entregas',entregaId), {
       fecha, viaje, clienteId, nombre:cliente.nombre, direccion:cliente.direccion||'',
-      numero:cliente.numero||'', telefono:cliente.telefono||'', camion, montoBoleta,
+      numero:cliente.numero||'', telefono:cliente.telefono||'', camion, montoBoleta, choferNombre,
       estado:'pendiente', formaPago:null, montos:{}, envases,
       envaseSaldoAlSalir: cliente.envaseSaldo || {},
       observaciones:'', horaEntrega:null
@@ -1120,7 +1134,7 @@ async function renderDashboard(){
       const g = byGrupo[key];
       const hechosGrupo = g.lista.filter(e=>e.estado==='entregado').length;
       return `
-      <details class="card" open>
+      <details class="card">
         <summary style="cursor:pointer; list-style:none; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
           <h2 style="margin:0;">${g.camion} · Viaje ${g.viaje} <span class="sub" style="font-weight:400;">(${hechosGrupo}/${g.lista.length})</span></h2>
         </summary>
@@ -1217,6 +1231,10 @@ async function confirmarAgregarClienteViaje(){
     const cant = parseFloat(document.getElementById(`agregarClientePrestamo_${i}`)?.value) || 0;
     if(cant) envases[tipo] = { prestaron: cant, devolvieron: 0, vendieron: 0 };
   });
+  // toma el nombre del chofer de algún otro cliente que ya esté en este mismo viaje
+  const otroDelViaje = Object.values(window.__ENTREGAS_HOY_ADMIN || {})
+    .find(e => e.camion === agregarClienteViajeCamion && (e.viaje||1) === agregarClienteViajeViaje && e.choferNombre);
+  const choferNombre = otroDelViaje?.choferNombre || null;
   const fecha = todayStr();
   const { db, doc, setDoc } = window.__fb;
   const entregaId = `${fecha}_${agregarClienteElegidoId}_v${agregarClienteViajeViaje}`;
@@ -1225,7 +1243,7 @@ async function confirmarAgregarClienteViaje(){
       fecha, viaje: agregarClienteViajeViaje, clienteId: agregarClienteElegidoId,
       nombre: cliente.nombre, direccion: cliente.direccion||'',
       numero: cliente.numero||'', telefono: cliente.telefono||'',
-      camion: agregarClienteViajeCamion, montoBoleta,
+      camion: agregarClienteViajeCamion, montoBoleta, choferNombre,
       estado:'pendiente', formaPago:null, montos:{}, envases,
       envaseSaldoAlSalir: cliente.envaseSaldo || {},
       observaciones:'', horaEntrega:null
@@ -2093,6 +2111,7 @@ function actualizarTotalACobrar(){
 
 function llenarSheet(e){
   selectedPago = null;
+  activeChoferNombre = e.choferNombre || null;
   const confirmarBtn = document.getElementById('confirmarEntregaBtn');
   confirmarBtn.disabled = false;
   confirmarBtn.textContent = 'Confirmar entrega';
@@ -2270,7 +2289,7 @@ async function confirmarEntrega(){
         const nuevoHistorial = {...historialActual};
         if(Object.keys(movimientosEntrega).length){
           const choferOriginal = historialActual[activeEntregaId]?.chofer;
-          nuevoHistorial[activeEntregaId] = { fecha: fechaHoy, chofer: currentChoferNombre || choferOriginal || null, movimientos: movimientosEntrega };
+          nuevoHistorial[activeEntregaId] = { fecha: fechaHoy, chofer: activeChoferNombre || currentChoferNombre || choferOriginal || null, movimientos: movimientosEntrega };
         } else {
           delete nuevoHistorial[activeEntregaId];
         }
