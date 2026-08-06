@@ -156,7 +156,7 @@
       <div class="tab active" data-tab="dashboard" onclick="switchTab('dashboard')">Hoy</div>
       <div class="tab" data-tab="clientes" onclick="switchTab('clientes')">Clientes</div>
       <div class="tab" data-tab="rutas" onclick="switchTab('rutas')">Armar rutas</div>
-      <div class="tab" data-tab="envases" onclick="switchTab('envases')">Envases</div>
+      <div class="tab" data-tab="envases" onclick="switchTab('envases')">Control de viajes</div>
       <div class="tab" data-tab="historial" onclick="switchTab('historial')">Historial</div>
     </div>
 
@@ -333,7 +333,7 @@
         <h2>Resúmenes archivados</h2>
         <div class="sub">Historial permanente y liviano de repartos ya archivados.</div>
         <table>
-          <thead><tr><th>Fecha</th><th>Camión</th><th>Viaje</th><th>Clientes</th><th>Cobrado</th></tr></thead>
+          <thead><tr><th>Fecha</th><th>Camión</th><th>Viaje</th><th>Chofer</th><th>Clientes</th><th>Cobrado</th></tr></thead>
           <tbody id="resumenesTable"></tbody>
         </table>
       </div>
@@ -1120,9 +1120,10 @@ async function renderDashboard(){
       ? gruposOrdenados.map(g=>{
           const hechosG = g.lista.filter(e=>e.estado==='entregado').length;
           const pendientesG = g.lista.length - hechosG;
+          const choferG = g.lista.find(e=>e.choferNombre)?.choferNombre;
           return `
           <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #ece9df;">
-            <span style="font-weight:600;">${g.camion} · Viaje ${g.viaje}</span>
+            <span style="font-weight:600;">${g.camion} · Viaje ${g.viaje}${choferG ? ' — '+choferG : ''}</span>
             <span class="sub" style="margin:0;">${hechosG}/${g.lista.length} entregados · <b style="color:${pendientesG>0?'var(--amber)':'var(--green)'};">${pendientesG} pendientes</b></span>
           </div>`;
         }).join('')
@@ -1133,10 +1134,11 @@ async function renderDashboard(){
     document.getElementById('dashByCamion').innerHTML = Object.keys(byGrupo).sort().map(key=>{
       const g = byGrupo[key];
       const hechosGrupo = g.lista.filter(e=>e.estado==='entregado').length;
+      const choferGrupo = g.lista.find(e=>e.choferNombre)?.choferNombre;
       return `
       <details class="card">
         <summary style="cursor:pointer; list-style:none; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-          <h2 style="margin:0;">${g.camion} · Viaje ${g.viaje} <span class="sub" style="font-weight:400;">(${hechosGrupo}/${g.lista.length})</span></h2>
+          <h2 style="margin:0;">${g.camion} · Viaje ${g.viaje}${choferGrupo ? ' — '+choferGrupo : ''} <span class="sub" style="font-weight:400;">(${hechosGrupo}/${g.lista.length})</span></h2>
         </summary>
         <div style="display:flex; justify-content:flex-end; margin:10px 0 6px;">
           <button class="btn btn-ghost" style="padding:6px 12px; font-size:12px;" onclick="event.preventDefault(); openAgregarClienteViaje('${g.camion}', ${g.viaje})">+ Agregar cliente</button>
@@ -1569,10 +1571,11 @@ function agruparEntregasPorViaje(entregas){
   entregas.forEach(e=>{
     const viaje = e.viaje || 1;
     const key = `${e.camion}||${viaje}`;
-    byGrupo[key] = byGrupo[key] || { camion:e.camion, viaje, clientes:0, totalBoleta:0, totalCobrado:0, tipos:{} };
+    byGrupo[key] = byGrupo[key] || { camion:e.camion, viaje, clientes:0, totalBoleta:0, totalCobrado:0, choferNombre:null, tipos:{} };
     byGrupo[key].clientes++;
     byGrupo[key].totalBoleta += (e.montoBoleta||0);
     if(e.estado === 'entregado') byGrupo[key].totalCobrado += (e.totalCobrado ?? e.montoBoleta ?? 0);
+    if(!byGrupo[key].choferNombre && e.choferNombre) byGrupo[key].choferNombre = e.choferNombre;
     const envases = e.envases || {};
     Object.keys(envases).forEach(tipo=>{
       byGrupo[key].tipos[tipo] = byGrupo[key].tipos[tipo] || {prestado:0, devuelto:0, vendidoBotellas:0};
@@ -1599,7 +1602,7 @@ async function verDiaAnterior(){
   const grupos = agruparEntregasPorViaje(entregas);
   resultEl.innerHTML = grupos.map(g=>`
     <div style="border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:10px;">
-      <div style="font-weight:700;">${g.camion} · Viaje ${g.viaje}</div>
+      <div style="font-weight:700;">${g.camion} · Viaje ${g.viaje}${g.choferNombre ? ' — '+g.choferNombre : ''}</div>
       <div class="sub" style="margin:2px 0 0;">${g.clientes} clientes · $${g.totalBoleta.toLocaleString('es-AR')} en boletas · $${g.totalCobrado.toLocaleString('es-AR')} cobrado</div>
       <div class="sub" style="margin:4px 0 0;">${TIPOS_ENVASE.map(t=>{
         const d = g.tipos[t] || {prestado:0, devuelto:0, vendidoBotellas:0};
@@ -1639,10 +1642,11 @@ async function archivarRepartosViejos(){
     entregas.forEach(e=>{
       const viaje = e.viaje || 1;
       const key = `${e.fecha}_${e.camion}_v${viaje}`;
-      porGrupo[key] = porGrupo[key] || { fecha:e.fecha, camion:e.camion, viaje, clientes:0, totalBoleta:0, totalCobrado:0, pagos:{efectivo:0,transferencia:0,qr:0}, tipos:{} };
+      porGrupo[key] = porGrupo[key] || { fecha:e.fecha, camion:e.camion, viaje, clientes:0, totalBoleta:0, totalCobrado:0, choferNombre:null, pagos:{efectivo:0,transferencia:0,qr:0}, tipos:{} };
       const g = porGrupo[key];
       g.clientes++;
       g.totalBoleta += (e.montoBoleta||0);
+      if(!g.choferNombre && e.choferNombre) g.choferNombre = e.choferNombre;
       if(e.estado === 'entregado'){
         const totalReal = e.totalCobrado ?? e.montoBoleta ?? 0;
         g.totalCobrado += totalReal;
@@ -1714,13 +1718,14 @@ async function cargarResumenesArchivados(){
         <td>${r.fecha}</td>
         <td>${r.camion}</td>
         <td>${r.viaje}</td>
+        <td>${r.choferNombre || '—'}</td>
         <td>${r.clientes}</td>
         <td>$${(r.totalCobrado||0).toLocaleString('es-AR')}</td>
       </tr>
-    `).join('') || `<tr><td colspan="5" style="color:var(--ink-soft);">Todavía no archivaste ningún reparto.</td></tr>`;
+    `).join('') || `<tr><td colspan="6" style="color:var(--ink-soft);">Todavía no archivaste ningún reparto.</td></tr>`;
   } catch(err){
     console.error(err);
-    tbody.innerHTML = `<tr><td colspan="5" style="color:var(--ink-soft);">No se pudo cargar (${err.code||err.message}).</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" style="color:var(--ink-soft);">No se pudo cargar (${err.code||err.message}).</td></tr>`;
   }
 }
 
@@ -1891,11 +1896,12 @@ async function renderConsolidado(){
       const cargaCamion = cargasPorGrupo[idx].exists() ? cargasPorGrupo[idx].data() : {};
       const progreso = calcularProgreso(g.clientes);
       const pagos = calcularDesglosePago(g.clientes);
+      const choferViaje = g.clientes.find(e=>e.choferNombre)?.choferNombre;
       return `
         <details class="viaje-consolidado-card" style="border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px;" open>
           <summary style="cursor:pointer; list-style:none; display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px;">
             <div>
-              <div style="font-weight:700;">${g.camion} · Viaje ${g.viaje} <span class="sub" style="font-weight:400;">(${progreso.completados}/${g.clientes.length} · ${progreso.pct}%)</span></div>
+              <div style="font-weight:700;">${g.camion} · Viaje ${g.viaje}${choferViaje ? ' — '+choferViaje : ''} <span class="sub" style="font-weight:400;">(${progreso.completados}/${g.clientes.length} · ${progreso.pct}%)</span></div>
               <div class="sub" style="margin:2px 0 0;">${g.clientes.length} clientes · $${g.totalBoleta.toLocaleString('es-AR')} en boletas cargadas · $${g.totalCobrado.toLocaleString('es-AR')} cobrado hasta ahora</div>
               <div class="sub" style="margin:2px 0 0;">Efectivo: $${pagos.efectivo.toLocaleString('es-AR')} · Transferencia: $${pagos.transferencia.toLocaleString('es-AR')} · QR: $${pagos.qr.toLocaleString('es-AR')}</div>
             </div>
