@@ -345,7 +345,10 @@
 <div id="driverView" class="hidden">
   <header class="topbar">
     <div class="title"><span class="mark" id="driverCamionLabel">Camión</span> Mi reparto</div>
-    <button onclick="logout()">Salir</button>
+    <div style="display:flex; gap:8px;">
+      <button onclick="mostrarSelectorViajeManual()">Cambiar viaje</button>
+      <button onclick="logout()">Salir</button>
+    </div>
   </header>
   <main>
     <div class="card" style="margin-bottom:12px;">
@@ -753,6 +756,27 @@ async function resolverViajeChofer(){
     currentViaje = viajes[0] || 1;
     entrarComoChofer();
   }
+}
+
+async function mostrarSelectorViajeManual(){
+  const fecha = todayStr();
+  const { db, collection, getDocs, query, where } = window.__fb;
+  const q = query(collection(db,'entregas'), where('fecha','==',fecha), where('camion','==',currentCamion));
+  const snap = await getDocs(q);
+  const viajes = [...new Set(snap.docs.map(d => d.data().viaje || 1))].sort((a,b)=>a-b);
+
+  if(!viajes.length){
+    toast('No hay viajes armados hoy para este camión todavía');
+    return;
+  }
+  document.getElementById('driverView').classList.add('hidden');
+  document.getElementById('viajePickerCamion').textContent = currentCamion;
+  document.getElementById('viajePickerButtons').innerHTML = viajes.map(v=>`
+    <div class="gate-card" style="width:150px; text-align:center;" onclick="elegirViaje(${v})">
+      <h3 style="margin:0;">Viaje ${v}${v===currentViaje ? ' (actual)' : ''}</h3>
+    </div>
+  `).join('');
+  document.getElementById('viajePicker').classList.remove('hidden');
 }
 
 function elegirViaje(v){
@@ -2315,7 +2339,7 @@ async function confirmarEntrega(){
 
 // exponer funciones usadas en HTML inline
 Object.assign(window, {
-  doLogin, logout, switchTab, elegirViaje,
+  doLogin, logout, switchTab, elegirViaje, mostrarSelectorViajeManual,
   importClientes, eliminarCliente, borrarTodosClientes, renderRutas, renderBusquedaRutas, quitarDeRuta, guardarRutaDelDia, onCambioCamionGlobal,
   openSheet, openSheetAdmin, closeSheet, selectPago, confirmarEntrega,
   openAnticipoSheet, closeAnticipoSheet, selectAnticipoTipo, guardarAnticipo, quitarAnticipo,
