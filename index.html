@@ -228,6 +228,24 @@
       </div>
 
       <div class="card">
+        <h2>Importar pedidos (desde FoxPro)</h2>
+        <div class="sub">Pegá el detalle de pedidos que te paso ya transcripto. Formato por línea: <b>numero_cliente,producto,cantidad</b> — podés repetir el mismo número de cliente en varias líneas si pidió más de un producto.</div>
+        <div class="field">
+          <textarea id="pedidosInput" placeholder="1024,Coca-Cola 2.25L,10
+1024,Sprite 1.5L,5
+1025,Fernet Branca 750ml,3"></textarea>
+        </div>
+        <button class="btn btn-primary" onclick="importarPedidos()" id="importarPedidosBtn">Importar pedidos</button>
+        <div class="sub" id="importarPedidosResultado" style="margin-top:8px;"></div>
+      </div>
+
+      <div class="card">
+        <h2>Pedidos pendientes de asignar</h2>
+        <div class="sub">Pedidos ya importados que todavía no fueron sumados a ningún viaje. Usá el camión/viaje/chofer elegidos arriba para asignarlos.</div>
+        <div id="pedidosPendientesList"></div>
+      </div>
+
+      <div class="card">
         <h2>Buscar clientes para agregar</h2>
         <div class="field">
           <label>Buscar cliente</label>
@@ -373,6 +391,7 @@
       <button class="close-x" onclick="closeSheet()">✕</button>
       <h3 id="sheetClientName">—</h3>
       <div class="addr" id="sheetClientAddr">—</div>
+      <div id="pedidoDetalle" class="hidden" style="background:#f7f6f1; border-radius:10px; padding:10px 12px; margin-bottom:14px;"></div>
       <div id="anticipoBanner" class="hidden" style="background:var(--green-bg); color:var(--green); border-radius:10px; padding:10px 12px; font-size:13px; margin-bottom:14px; font-weight:600;"></div>
 
       <div class="field">
@@ -966,6 +985,7 @@ function renderRutas(){
   renderBusquedaRutas();
   renderSeleccionados();
   renderCargaInicialRuta();
+  renderPedidosPendientes();
 }
 
 function poblarCamionGlobal(){
@@ -1119,6 +1139,130 @@ async function guardarRutaDelDia(){
   selectedPrestamo = {};
   renderDashboard();
   renderRutas();
+}
+
+/* =======================================================================
+   PEDIDOS — importar el detalle de mercadería y asignarlo a un viaje
+   ======================================================================= */
+async function importarPedidos(){
+  const raw = document.getElementById('pedidosInput').value.trim();
+  if(!raw){ toast('Pegá el detalle de pedidos primero'); return; }
+  const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
+
+  // Agrupa las líneas por número de cliente
+  const porCliente = {};
+  for(const line of lines){
+    const parts = line.split(',').map(p=>p.trim());
+    if(parts.length < 3) continue;
+    const [numero, producto, cantidadStr] = parts;
+    if(!numero || !producto) continue;
+    const cantidad = parseFloat(cantidadStr) || 0;
+    if(!porCliente[numero]) porCliente[numero] = [];
+    porCliente[numero].push({ producto, cantidad });
+  }
+
+  const numeros = Object.keys(porCliente);
+  if(!numeros.length){ toast('No encontré líneas válidas'); return; }
+
+  if(!CLIENTES.length) await loadClientes();
+  const { db, doc, setDoc, writeBatch } = window.__fb;
+  const btn = document.getElementById('importarPedidosBtn');
+  const resultEl = document.getElementById('importarPedidosResultado');
+  btn.disabled = true;
+  btn.textContent = 'Importando...';
+
+  let importados = 0;
+  const sinCliente = [];
+  const batch = writeBatch(db);
+  numeros.forEach(numero=>{
+    const cliente = CLIENTES.find(c => (c.numero||'') === numero);
+    if(!cliente){ sinCliente.push(numero); return; }
+    batch.set(doc(db,'pedidos_pendientes', numero), {
+      numero, clienteId: cliente.id, nombreCliente: cliente.nombre,
+      productos: porCliente[numero], fechaImportado: todayStr()
+    });
+    importados++;
+  });
+  try {
+    await batch.commit();
+    resultEl.textContent = `${importados} pedidos importados.` + (sinCliente.length ? ` No encontré cliente con número: ${sinCliente.join(', ')}.` : '');
+    toast('Pedidos importados');
+    document.getElementById('pedidosInput').value = '';
+    renderPedidosPendientes();
+  } catch(err){
+    console.error(err);
+    resultEl.textContent = 'Error al importar: ' + (err.code || err.message || err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Importar pedidos';
+  }
+}
+
+async function renderPedidosPendientes(){
+  const el = document.getElementById('pedidosPendientesList');
+  if(!el) return;
+  const { db, collection, getDocs } = window.__fb;
+  try {
+    const snap = await getDocs(collection(db,'pedidos_pendientes'));
+    const pedidos = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    el.innerHTML = pedidos.map(p=>`
+      <div style="border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:8px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px;">
+          <div>
+            <b>${p.nombreCliente}</b> <span style="color:var(--ink-soft); font-size:12px;">#${p.numero}</span>
+            <div class="sub" style="margin:4px 0 0;">${(p.productos||[]).map(x=>`${x.cantidad} × ${x.producto}`).join(' · ')}</div>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="asignarPedidoAViaje('${p.id}')">Agregar al viaje elegido arriba</button>
+            <button class="btn btn-ghost" style="padding:6px 12px; font-size:12px;" onclick="borrarPedidoPendiente('${p.id}')">Descartar</button>
+          </div>
+        </div>
+      </div>
+    `).join('') || `<div class="sub">No hay pedidos pendientes de asignar.</div>`;
+  } catch(err){
+    console.error(err);
+    el.innerHTML = `<div class="sub">No se pudo cargar (${err.code||err.message}).</div>`;
+  }
+}
+
+async function borrarPedidoPendiente(pedidoId){
+  const { db, doc, deleteDoc } = window.__fb;
+  await deleteDoc(doc(db,'pedidos_pendientes', pedidoId));
+  toast('Pedido descartado');
+  renderPedidosPendientes();
+}
+
+async function asignarPedidoAViaje(pedidoId){
+  const camion = document.getElementById('rutaCamionGlobal')?.value;
+  const viaje = parseInt(document.getElementById('rutaViajeGlobal')?.value) || 1;
+  const choferNombre = document.getElementById('rutaChoferNombre')?.value.trim() || null;
+  const fecha = document.getElementById('rutaFecha').value || todayStr();
+  if(!camion){ toast('Elegí un camión arriba primero'); return; }
+
+  const { db, doc, getDoc, setDoc, deleteDoc } = window.__fb;
+  const pedidoSnap = await getDoc(doc(db,'pedidos_pendientes', pedidoId));
+  if(!pedidoSnap.exists()){ toast('Ese pedido ya no está'); return; }
+  const pedido = pedidoSnap.data();
+  const cliente = CLIENTES.find(c => c.id === pedido.clienteId) || { nombre: pedido.nombreCliente, direccion:'', numero: pedido.numero, telefono:'', envaseSaldo:{} };
+
+  const entregaId = `${fecha}_${pedido.clienteId}_v${viaje}`;
+  try {
+    await setDoc(doc(db,'entregas',entregaId), {
+      fecha, viaje, clienteId: pedido.clienteId, nombre: cliente.nombre, direccion: cliente.direccion||'',
+      numero: cliente.numero||'', telefono: cliente.telefono||'',
+      camion, choferNombre, montoBoleta: 0, pedido: pedido.productos || [],
+      estado:'pendiente', formaPago:null, montos:{}, envases:{},
+      envaseSaldoAlSalir: cliente.envaseSaldo || {},
+      observaciones:'', horaEntrega:null
+    }, {merge:true});
+    await deleteDoc(doc(db,'pedidos_pendientes', pedidoId));
+    toast(`${cliente.nombre} agregado a ${camion} · Viaje ${viaje} con su pedido`);
+    renderPedidosPendientes();
+    renderDashboard();
+  } catch(err){
+    console.error(err);
+    alert('No se pudo asignar el pedido.\n\nError: ' + (err.code || err.message || err));
+  }
 }
 
 /* =======================================================================
@@ -2066,6 +2210,7 @@ async function loadDriverRoute(){
           <div class="name">${e.nombre}</div>
           <div class="meta">${e.direccion||''} ${e.estado==='entregado'? '· '+pagoLabel(e) : ''}</div>
           ${e.anticipo ? `<div style="margin-top:6px;"><span class="badge ok">Ya transfirió $${e.anticipo.monto} · ${e.anticipo.tipo==='total'?'Total':'Parcial'}</span></div>` : ''}
+          ${e.pedido && e.pedido.length ? `<div style="margin-top:4px;"><span class="badge ok">Pedido: ${e.pedido.length} producto${e.pedido.length>1?'s':''}</span></div>` : ''}
         </div>
         <div class="chev">${e.estado==='entregado' ? '✓' : '›'}</div>
       </div>
@@ -2147,6 +2292,15 @@ function llenarSheet(e){
   confirmarBtn.textContent = 'Confirmar entrega';
   document.getElementById('sheetClientName').textContent = e.nombre;
   document.getElementById('sheetClientAddr').textContent = e.direccion || '';
+
+  const pedidoEl = document.getElementById('pedidoDetalle');
+  if(e.pedido && e.pedido.length){
+    pedidoEl.innerHTML = `<div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-soft); margin-bottom:6px;">Pedido de este cliente</div>` +
+      e.pedido.map(x=>`<div style="font-size:14px; padding:3px 0;">${x.cantidad} × ${x.producto}</div>`).join('');
+    pedidoEl.classList.remove('hidden');
+  } else {
+    pedidoEl.classList.add('hidden');
+  }
 
   const boletaInput = document.getElementById('montoBoleta');
   boletaInput.value = e.montoBoleta || '';
@@ -2349,7 +2503,8 @@ Object.assign(window, {
   openAgregarClienteViaje, closeAgregarClienteViaje, volverABuscarCliente, renderBusquedaAgregarCliente, elegirClienteParaAgregar, confirmarAgregarClienteViaje,
   guardarCargaInicial, eliminarViaje, quitarClienteDeViaje, renderClientesTab, renderEnvasesTabla, toggleHistorial,
   guardarPrecioEnvase, actualizarTotalACobrar, recalcularTodosLosSaldos,
-  verDiaAnterior, archivarRepartosViejos, cargarResumenesArchivados
+  verDiaAnterior, archivarRepartosViejos, cargarResumenesArchivados,
+  importarPedidos, renderPedidosPendientes, borrarPedidoPendiente, asignarPedidoAViaje
 });
 </script>
 </body>
