@@ -229,11 +229,11 @@
 
       <div class="card">
         <h2>Importar pedidos (desde FoxPro)</h2>
-        <div class="sub">Pegá el detalle de pedidos que te paso ya transcripto. Formato por línea: <b>numero_cliente,producto,cantidad</b> — podés repetir el mismo número de cliente en varias líneas si pidió más de un producto.</div>
+        <div class="sub">Pegá el detalle de pedidos que te paso ya transcripto. Formato por línea: <b>nombre_cliente,producto,cantidad</b> — podés repetir el mismo cliente en varias líneas si pidió más de un producto. El nombre tiene que coincidir con el que tenés cargado en "Clientes".</div>
         <div class="field">
-          <textarea id="pedidosInput" placeholder="1024,Coca-Cola 2.25L,10
-1024,Sprite 1.5L,5
-1025,Fernet Branca 750ml,3"></textarea>
+          <textarea id="pedidosInput" placeholder="GODOY ALEJANDRA,COCA COLA 2 LT RET,1.5
+GODOY ALEJANDRA,STELLA ARTOIS 1 LITRO RET,1
+ARMELLA CORINA,VINO TORO TETRA BLANCO 1 LT,1"></textarea>
         </div>
         <button class="btn btn-primary" onclick="importarPedidos()" id="importarPedidosBtn">Importar pedidos</button>
         <div class="sub" id="importarPedidosResultado" style="margin-top:8px;"></div>
@@ -1149,22 +1149,23 @@ async function importarPedidos(){
   if(!raw){ toast('Pegá el detalle de pedidos primero'); return; }
   const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
 
-  // Agrupa las líneas por número de cliente
+  // Agrupa las líneas por nombre de cliente
   const porCliente = {};
   for(const line of lines){
     const parts = line.split(',').map(p=>p.trim());
     if(parts.length < 3) continue;
-    const [numero, producto, cantidadStr] = parts;
-    if(!numero || !producto) continue;
+    const [nombreCliente, producto, cantidadStr] = parts;
+    if(!nombreCliente || !producto) continue;
     const cantidad = parseFloat(cantidadStr) || 0;
-    if(!porCliente[numero]) porCliente[numero] = [];
-    porCliente[numero].push({ producto, cantidad });
+    if(!porCliente[nombreCliente]) porCliente[nombreCliente] = [];
+    porCliente[nombreCliente].push({ producto, cantidad });
   }
 
-  const numeros = Object.keys(porCliente);
-  if(!numeros.length){ toast('No encontré líneas válidas'); return; }
+  const nombres = Object.keys(porCliente);
+  if(!nombres.length){ toast('No encontré líneas válidas'); return; }
 
   if(!CLIENTES.length) await loadClientes();
+  const normalizar = s => (s||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
   const { db, doc, setDoc, writeBatch } = window.__fb;
   const btn = document.getElementById('importarPedidosBtn');
   const resultEl = document.getElementById('importarPedidosResultado');
@@ -1174,18 +1175,20 @@ async function importarPedidos(){
   let importados = 0;
   const sinCliente = [];
   const batch = writeBatch(db);
-  numeros.forEach(numero=>{
-    const cliente = CLIENTES.find(c => (c.numero||'') === numero);
-    if(!cliente){ sinCliente.push(numero); return; }
-    batch.set(doc(db,'pedidos_pendientes', numero), {
-      numero, clienteId: cliente.id, nombreCliente: cliente.nombre,
-      productos: porCliente[numero], fechaImportado: todayStr()
+  nombres.forEach(nombreCliente=>{
+    const norm = normalizar(nombreCliente);
+    const cliente = CLIENTES.find(c => normalizar(c.nombre) === norm);
+    if(!cliente){ sinCliente.push(nombreCliente); return; }
+    const pedidoId = cliente.id; // un pedido pendiente por cliente a la vez
+    batch.set(doc(db,'pedidos_pendientes', pedidoId), {
+      numero: cliente.numero||'', clienteId: cliente.id, nombreCliente: cliente.nombre,
+      productos: porCliente[nombreCliente], fechaImportado: todayStr()
     });
     importados++;
   });
   try {
     await batch.commit();
-    resultEl.textContent = `${importados} pedidos importados.` + (sinCliente.length ? ` No encontré cliente con número: ${sinCliente.join(', ')}.` : '');
+    resultEl.textContent = `${importados} pedidos importados.` + (sinCliente.length ? ` No encontré cliente con el nombre: ${sinCliente.join(' | ')}.` : '');
     toast('Pedidos importados');
     document.getElementById('pedidosInput').value = '';
     renderPedidosPendientes();
