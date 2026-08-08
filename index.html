@@ -1364,12 +1364,22 @@ function envLabel(e){
   const envases = e.envases || {};
   const tipos = Object.keys(envases);
   if(!tipos.length) return '—';
-  return tipos.map(tipo=>{
-    const debe = (envases[tipo].prestaron||0) - (envases[tipo].devolvieron||0);
-    return debe>0
-      ? `<span class="badge debe">${tipo}: debe ${formatCajones(tipo, debe)}</span>`
-      : `<span class="badge ok">${tipo}: completo</span>`;
-  }).join(' ');
+  const badges = [];
+  tipos.forEach(tipo=>{
+    const prestaron = envases[tipo].prestaron||0;
+    const devolvieron = envases[tipo].devolvieron||0;
+    const vendieron = envases[tipo].vendieron||0;
+    if(prestaron || devolvieron){
+      const debe = prestaron - devolvieron;
+      badges.push(debe>0
+        ? `<span class="badge debe">${tipo}: debe ${formatCajones(tipo, debe)}</span>`
+        : `<span class="badge ok">${tipo}: completo</span>`);
+    }
+    if(vendieron){
+      badges.push(`<span class="badge ok">${tipo}: vendidas ${vendieron} botella${vendieron>1?'s':''}</span>`);
+    }
+  });
+  return badges.join(' ') || '—';
 }
 
 /* ---------- Marcar transferencia confirmada (admin, antes de que salga el camión) ---------- */
