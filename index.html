@@ -82,6 +82,7 @@
   .badge.pendiente{background:var(--amber-bg); color:var(--amber);}
   .badge.entregado{background:var(--green-bg); color:var(--green);}
   .badge.debe{background:var(--red-bg); color:var(--red);}
+  .badge.rechazado{background:var(--red-bg); color:var(--red);}
   .badge.ok{background:var(--green-bg); color:var(--green);}
 
   /* ---------- Vista chofer ---------- */
@@ -225,24 +226,6 @@
           </div>
         </div>
         <div class="sub" style="margin-top:8px;">Escribí quién maneja este camión hoy — así, si un cliente no se acuerda de haber pedido prestado un cajón, sabemos a quién preguntarle. No hace falta que coincida con el usuario con el que se loguea (el personal cambia).</div>
-      </div>
-
-      <div class="card">
-        <h2>Importar pedidos (desde FoxPro)</h2>
-        <div class="sub">Pegá el detalle de pedidos que te paso ya transcripto. Formato por línea: <b>nombre_cliente,producto,cantidad</b> — podés repetir el mismo cliente en varias líneas si pidió más de un producto. El nombre tiene que coincidir con el que tenés cargado en "Clientes".</div>
-        <div class="field">
-          <textarea id="pedidosInput" placeholder="GODOY ALEJANDRA,COCA COLA 2 LT RET,1.5
-GODOY ALEJANDRA,STELLA ARTOIS 1 LITRO RET,1
-ARMELLA CORINA,VINO TORO TETRA BLANCO 1 LT,1"></textarea>
-        </div>
-        <button class="btn btn-primary" onclick="importarPedidos()" id="importarPedidosBtn">Importar pedidos</button>
-        <div class="sub" id="importarPedidosResultado" style="margin-top:8px;"></div>
-      </div>
-
-      <div class="card">
-        <h2>Pedidos pendientes de asignar</h2>
-        <div class="sub">Pedidos ya importados que todavía no fueron sumados a ningún viaje. Usá el camión/viaje/chofer elegidos arriba para asignarlos.</div>
-        <div id="pedidosPendientesList"></div>
       </div>
 
       <div class="card">
@@ -391,7 +374,6 @@ ARMELLA CORINA,VINO TORO TETRA BLANCO 1 LT,1"></textarea>
       <button class="close-x" onclick="closeSheet()">✕</button>
       <h3 id="sheetClientName">—</h3>
       <div class="addr" id="sheetClientAddr">—</div>
-      <div id="pedidoDetalle" class="hidden" style="background:#f7f6f1; border-radius:10px; padding:10px 12px; margin-bottom:14px;"></div>
       <div id="anticipoBanner" class="hidden" style="background:var(--green-bg); color:var(--green); border-radius:10px; padding:10px 12px; font-size:13px; margin-bottom:14px; font-weight:600;"></div>
 
       <div class="field">
@@ -441,6 +423,7 @@ ARMELLA CORINA,VINO TORO TETRA BLANCO 1 LT,1"></textarea>
       </div>
 
       <button class="btn btn-primary btn-block" id="confirmarEntregaBtn" onclick="confirmarEntrega()">Confirmar entrega</button>
+      <button class="btn btn-ghost btn-block" id="rechazarEntregaBtn" style="color:var(--red); border-color:var(--red); margin-top:8px;" onclick="rechazarEntrega()">Pedido rechazado / cancelado</button>
     </div>
   </div>
 </div>
@@ -544,6 +527,26 @@ ARMELLA CORINA,VINO TORO TETRA BLANCO 1 LT,1"></textarea>
       </div>
 
       <button class="btn btn-primary btn-block" onclick="guardarAjusteSaldo()">Guardar ajuste</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL AGREGAR CLIENTE AL REPARTO — con monto ahí mismo (ADMIN) ============ -->
+<div id="agregarClienteMontoOverlay" class="overlay hidden" onclick="if(event.target===this)closeAgregarClienteMontoSheet()">
+  <div class="sheet">
+    <div class="sheet-wrap">
+      <button class="close-x" onclick="closeAgregarClienteMontoSheet()">✕</button>
+      <h3>Agregar al reparto</h3>
+      <div class="addr" id="agregarClienteMontoNombre">—</div>
+      <div class="field">
+        <label>Monto de la boleta ($)</label>
+        <input type="number" min="0" id="agregarClienteMontoBoleta" placeholder="0">
+      </div>
+      <div class="field">
+        <label>Cajones que le prestás (opcional)</label>
+        <div id="agregarClienteMontoPrestamoInputs"></div>
+      </div>
+      <button class="btn btn-primary btn-block" onclick="confirmarAgregarClienteMonto()">Agregar al reparto</button>
     </div>
   </div>
 </div>
@@ -985,7 +988,6 @@ function renderRutas(){
   renderBusquedaRutas();
   renderSeleccionados();
   renderCargaInicialRuta();
-  renderPedidosPendientes();
 }
 
 function poblarCamionGlobal(){
@@ -1019,18 +1021,17 @@ function renderBusquedaRutas(){
     (c.numero||'').toLowerCase().includes(q) ||
     (c.direccion||'').toLowerCase().includes(q)
   ).slice(0, 40);
-  resultsEl.innerHTML = matches.map(c=>`
-    <label style="display:flex; align-items:center; gap:10px; font-size:14px; font-weight:400; padding:8px 0; border-bottom:1px solid #ece9df;">
-      <input type="checkbox" value="${c.id}" class="rutaCheck" ${rutaSeleccion.has(c.id)?'checked':''} style="width:18px; height:18px;">
-      <span><b>${c.nombre}</b> ${c.numero?`<span style="color:var(--ink-soft); font-size:12px;">#${c.numero}</span>`:''}<br><span style="color:var(--ink-soft); font-size:12.5px;">${c.direccion||''}</span></span>
-    </label>
-  `).join('') || `<div class="sub">No encontré clientes con "${q}".</div>`;
-  document.querySelectorAll('#rutaSearchResults .rutaCheck').forEach(chk=>{
-    chk.addEventListener('change', ()=>{
-      chk.checked ? rutaSeleccion.add(chk.value) : rutaSeleccion.delete(chk.value);
-      renderSeleccionados();
-    });
-  });
+  resultsEl.innerHTML = matches.map(c=>{
+    const yaAgregado = rutaSeleccion.has(c.id);
+    return `
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:14px; padding:8px 0; border-bottom:1px solid #ece9df;">
+      <span><b>${c.nombre}</b> ${c.numero?`<span style="color:var(--ink-soft); font-size:12px;">#${c.numero}</span>`:''}<br><span style="color:var(--ink-soft); font-size:12.5px;">${c.direccion||''}</span>${yaAgregado ? ` <span class="badge ok">En el reparto — $${selectedMontoBoleta[c.id]||0}</span>` : ''}</span>
+      ${yaAgregado
+        ? `<button class="btn btn-ghost" style="padding:6px 12px; font-size:12px; flex-shrink:0;" onclick="quitarDeRuta('${c.id}')">Quitar</button>`
+        : `<button class="btn btn-primary" style="padding:6px 12px; font-size:12px; flex-shrink:0;" onclick="openAgregarClienteMontoSheet('${c.id}','${(c.nombre||'').replace(/'/g,"\\'")}')">Agregar</button>`
+      }
+    </div>`;
+  }).join('') || `<div class="sub">No encontré clientes con "${q}".</div>`;
 }
 
 function renderSeleccionados(){
@@ -1102,6 +1103,37 @@ function quitarDeRuta(clienteId){
   renderRutas();
 }
 
+/* ---------- Agregar cliente al reparto con monto/cajones ahí mismo ---------- */
+let agregarClienteMontoId = null;
+function openAgregarClienteMontoSheet(clienteId, nombre){
+  agregarClienteMontoId = clienteId;
+  document.getElementById('agregarClienteMontoNombre').textContent = nombre;
+  document.getElementById('agregarClienteMontoBoleta').value = '';
+  document.getElementById('agregarClienteMontoPrestamoInputs').innerHTML = TIPOS_ENVASE.map(tipo=>`
+    <label class="field-mini" style="display:inline-flex; margin-right:14px;"><span>${tipo}</span>
+      <input type="number" min="0" step="0.5" class="agregarClienteMontoPrestamoInput" data-tipo="${tipo}" placeholder="0" style="width:80px;">
+    </label>
+  `).join('');
+  document.getElementById('agregarClienteMontoOverlay').classList.remove('hidden');
+}
+function closeAgregarClienteMontoSheet(){
+  document.getElementById('agregarClienteMontoOverlay').classList.add('hidden');
+  agregarClienteMontoId = null;
+}
+function confirmarAgregarClienteMonto(){
+  if(!agregarClienteMontoId) return;
+  const monto = parseFloat(document.getElementById('agregarClienteMontoBoleta').value) || 0;
+  selectedMontoBoleta[agregarClienteMontoId] = monto;
+  if(!selectedPrestamo[agregarClienteMontoId]) selectedPrestamo[agregarClienteMontoId] = {};
+  document.querySelectorAll('.agregarClienteMontoPrestamoInput').forEach(inp=>{
+    const cant = parseFloat(inp.value) || 0;
+    if(cant) selectedPrestamo[agregarClienteMontoId][inp.dataset.tipo] = cant;
+  });
+  rutaSeleccion.add(agregarClienteMontoId);
+  closeAgregarClienteMontoSheet();
+  renderRutas();
+}
+
 async function guardarRutaDelDia(){
   const fecha = document.getElementById('rutaFecha').value || todayStr();
   const camion = document.getElementById('rutaCamionGlobal')?.value;
@@ -1140,134 +1172,6 @@ async function guardarRutaDelDia(){
   renderDashboard();
   renderRutas();
 }
-
-/* =======================================================================
-   PEDIDOS — importar el detalle de mercadería y asignarlo a un viaje
-   ======================================================================= */
-async function importarPedidos(){
-  const raw = document.getElementById('pedidosInput').value.trim();
-  if(!raw){ toast('Pegá el detalle de pedidos primero'); return; }
-  const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
-
-  // Agrupa las líneas por nombre de cliente
-  const porCliente = {};
-  for(const line of lines){
-    const parts = line.split(',').map(p=>p.trim());
-    if(parts.length < 3) continue;
-    const [nombreCliente, producto, cantidadStr] = parts;
-    if(!nombreCliente || !producto) continue;
-    const cantidad = parseFloat(cantidadStr) || 0;
-    if(!porCliente[nombreCliente]) porCliente[nombreCliente] = [];
-    porCliente[nombreCliente].push({ producto, cantidad });
-  }
-
-  const nombres = Object.keys(porCliente);
-  if(!nombres.length){ toast('No encontré líneas válidas'); return; }
-
-  if(!CLIENTES.length) await loadClientes();
-  const normalizar = s => (s||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
-  const { db, doc, setDoc, writeBatch } = window.__fb;
-  const btn = document.getElementById('importarPedidosBtn');
-  const resultEl = document.getElementById('importarPedidosResultado');
-  btn.disabled = true;
-  btn.textContent = 'Importando...';
-
-  let importados = 0;
-  const sinCliente = [];
-  const batch = writeBatch(db);
-  nombres.forEach(nombreCliente=>{
-    const norm = normalizar(nombreCliente);
-    const cliente = CLIENTES.find(c => normalizar(c.nombre) === norm);
-    if(!cliente){ sinCliente.push(nombreCliente); return; }
-    const pedidoId = cliente.id; // un pedido pendiente por cliente a la vez
-    batch.set(doc(db,'pedidos_pendientes', pedidoId), {
-      numero: cliente.numero||'', clienteId: cliente.id, nombreCliente: cliente.nombre,
-      productos: porCliente[nombreCliente], fechaImportado: todayStr()
-    });
-    importados++;
-  });
-  try {
-    await batch.commit();
-    resultEl.textContent = `${importados} pedidos importados.` + (sinCliente.length ? ` No encontré cliente con el nombre: ${sinCliente.join(' | ')}.` : '');
-    toast('Pedidos importados');
-    document.getElementById('pedidosInput').value = '';
-    renderPedidosPendientes();
-  } catch(err){
-    console.error(err);
-    resultEl.textContent = 'Error al importar: ' + (err.code || err.message || err);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Importar pedidos';
-  }
-}
-
-async function renderPedidosPendientes(){
-  const el = document.getElementById('pedidosPendientesList');
-  if(!el) return;
-  const { db, collection, getDocs } = window.__fb;
-  try {
-    const snap = await getDocs(collection(db,'pedidos_pendientes'));
-    const pedidos = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    el.innerHTML = pedidos.map(p=>`
-      <div style="border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:8px;">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px;">
-          <div>
-            <b>${p.nombreCliente}</b> <span style="color:var(--ink-soft); font-size:12px;">#${p.numero}</span>
-            <div class="sub" style="margin:4px 0 0;">${(p.productos||[]).map(x=>`${x.cantidad} × ${x.producto}`).join(' · ')}</div>
-          </div>
-          <div style="display:flex; gap:6px;">
-            <button class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="asignarPedidoAViaje('${p.id}')">Agregar al viaje elegido arriba</button>
-            <button class="btn btn-ghost" style="padding:6px 12px; font-size:12px;" onclick="borrarPedidoPendiente('${p.id}')">Descartar</button>
-          </div>
-        </div>
-      </div>
-    `).join('') || `<div class="sub">No hay pedidos pendientes de asignar.</div>`;
-  } catch(err){
-    console.error(err);
-    el.innerHTML = `<div class="sub">No se pudo cargar (${err.code||err.message}).</div>`;
-  }
-}
-
-async function borrarPedidoPendiente(pedidoId){
-  const { db, doc, deleteDoc } = window.__fb;
-  await deleteDoc(doc(db,'pedidos_pendientes', pedidoId));
-  toast('Pedido descartado');
-  renderPedidosPendientes();
-}
-
-async function asignarPedidoAViaje(pedidoId){
-  const camion = document.getElementById('rutaCamionGlobal')?.value;
-  const viaje = parseInt(document.getElementById('rutaViajeGlobal')?.value) || 1;
-  const choferNombre = document.getElementById('rutaChoferNombre')?.value.trim() || null;
-  const fecha = document.getElementById('rutaFecha').value || todayStr();
-  if(!camion){ toast('Elegí un camión arriba primero'); return; }
-
-  const { db, doc, getDoc, setDoc, deleteDoc } = window.__fb;
-  const pedidoSnap = await getDoc(doc(db,'pedidos_pendientes', pedidoId));
-  if(!pedidoSnap.exists()){ toast('Ese pedido ya no está'); return; }
-  const pedido = pedidoSnap.data();
-  const cliente = CLIENTES.find(c => c.id === pedido.clienteId) || { nombre: pedido.nombreCliente, direccion:'', numero: pedido.numero, telefono:'', envaseSaldo:{} };
-
-  const entregaId = `${fecha}_${pedido.clienteId}_v${viaje}`;
-  try {
-    await setDoc(doc(db,'entregas',entregaId), {
-      fecha, viaje, clienteId: pedido.clienteId, nombre: cliente.nombre, direccion: cliente.direccion||'',
-      numero: cliente.numero||'', telefono: cliente.telefono||'',
-      camion, choferNombre, montoBoleta: 0, pedido: pedido.productos || [],
-      estado:'pendiente', formaPago:null, montos:{}, envases:{},
-      envaseSaldoAlSalir: cliente.envaseSaldo || {},
-      observaciones:'', horaEntrega:null
-    }, {merge:true});
-    await deleteDoc(doc(db,'pedidos_pendientes', pedidoId));
-    toast(`${cliente.nombre} agregado a ${camion} · Viaje ${viaje} con su pedido`);
-    renderPedidosPendientes();
-    renderDashboard();
-  } catch(err){
-    console.error(err);
-    alert('No se pudo asignar el pedido.\n\nError: ' + (err.code || err.message || err));
-  }
-}
-
 /* =======================================================================
    DASHBOARD (ADMIN)
    ======================================================================= */
@@ -1290,12 +1194,13 @@ async function renderDashboard(){
     document.getElementById('dashSummary').innerHTML = gruposOrdenados.length
       ? gruposOrdenados.map(g=>{
           const hechosG = g.lista.filter(e=>e.estado==='entregado').length;
-          const pendientesG = g.lista.length - hechosG;
+          const rechazadosG = g.lista.filter(e=>e.estado==='rechazado').length;
+          const pendientesG = g.lista.length - hechosG - rechazadosG;
           const choferG = g.lista.find(e=>e.choferNombre)?.choferNombre;
           return `
           <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #ece9df;">
             <span style="font-weight:600;">${g.camion} · Viaje ${g.viaje}${choferG ? ' — '+choferG : ''}</span>
-            <span class="sub" style="margin:0;">${hechosG}/${g.lista.length} entregados · <b style="color:${pendientesG>0?'var(--amber)':'var(--green)'};">${pendientesG} pendientes</b></span>
+            <span class="sub" style="margin:0;">${hechosG}/${g.lista.length} entregados${rechazadosG ? ` · ${rechazadosG} rechazados` : ''} · <b style="color:${pendientesG>0?'var(--amber)':'var(--green)'};">${pendientesG} pendientes</b></span>
           </div>`;
         }).join('')
       : `<div class="sub">Todavía no armaste ningún reparto hoy.</div>`;
@@ -1304,7 +1209,7 @@ async function renderDashboard(){
     entregas.forEach(e=> window.__ENTREGAS_HOY_ADMIN[e.id] = e);
     document.getElementById('dashByCamion').innerHTML = Object.keys(byGrupo).sort().map(key=>{
       const g = byGrupo[key];
-      const hechosGrupo = g.lista.filter(e=>e.estado==='entregado').length;
+      const hechosGrupo = g.lista.filter(e=>e.estado==='entregado' || e.estado==='rechazado').length;
       const choferGrupo = g.lista.find(e=>e.choferNombre)?.choferNombre;
       return `
       <details class="card">
@@ -1320,13 +1225,13 @@ async function renderDashboard(){
             ${g.lista.map(e=>`
               <tr>
                 <td>${e.nombre}</td>
-                <td><span class="badge ${e.estado==='entregado'?'entregado':'pendiente'}">${e.estado==='entregado'?'Entregado':'Pendiente'}</span></td>
+                <td>${estadoBadge(e)}</td>
                 <td>${e.montoBoleta ? '$'+e.montoBoleta : '—'}</td>
                 <td>${e.estado==='entregado' ? '$'+(e.totalCobrado ?? e.montoBoleta ?? 0) : '—'}</td>
                 <td>${pagoLabel(e)}</td>
                 <td>${envLabel(e)}</td>
                 <td>${anticipoCell(e)}</td>
-                <td>${e.estado==='entregado' ? `<button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="openSheetAdmin('${e.id}')">Corregir</button>` : ''}</td>
+                <td>${e.estado==='entregado' || e.estado==='rechazado' ? `<button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="openSheetAdmin('${e.id}')">Corregir</button>` : ''}</td>
               </tr>
             `).join('')}
           </tbody>
@@ -1438,7 +1343,14 @@ function anticipoCell(e){
   return `<button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="openAnticipoSheet('${e.id}')">Marcar transferencia</button>`;
 }
 
+function estadoBadge(e){
+  if(e.estado==='entregado') return `<span class="badge entregado">Entregado</span>`;
+  if(e.estado==='rechazado') return `<span class="badge rechazado">Rechazado</span>`;
+  return `<span class="badge pendiente">Pendiente</span>`;
+}
+
 function pagoLabel(e){
+  if(e.estado==='rechazado') return `<span class="badge rechazado">Rechazado${e.observaciones ? ' — '+e.observaciones : ''}</span>`;
   if(e.estado!=='entregado') return '—';
   if(e.formaPago==='mixto'){
     const m = e.montos||{};
@@ -1994,7 +1906,7 @@ function renderEnvasesTabla(){
 
 function calcularProgreso(clientes){
   const total = clientes.length;
-  const entregados = clientes.filter(c => c.estado === 'entregado' && c.horaEntrega);
+  const entregados = clientes.filter(c => (c.estado === 'entregado' || c.estado === 'rechazado') && c.horaEntrega);
   const completados = entregados.length;
   const pct = total ? Math.round((completados/total)*100) : 0;
 
@@ -2128,7 +2040,7 @@ async function renderConsolidado(){
                   ${g.clientes.map(c=>`
                     <tr>
                       <td>${c.nombre}</td>
-                      <td><span class="badge ${c.estado==='entregado'?'entregado':'pendiente'}">${c.estado==='entregado'?'Entregado':'Pendiente'}</span></td>
+                      <td>${estadoBadge(c)}</td>
                       <td>${c.montoBoleta ? '$'+c.montoBoleta : '—'}</td>
                       <td>${c.estado==='entregado' ? '$'+(c.totalCobrado ?? c.montoBoleta ?? 0) : '—'}</td>
                       <td><button class="btn btn-ghost" style="padding:4px 8px; font-size:11.5px;" onclick="openEditarBoletaSheet('${c.id}','${(c.nombre||'').replace(/'/g,"\\'")}', ${c.montoBoleta||0})">Editar boleta</button></td>
@@ -2199,23 +2111,23 @@ async function loadDriverRoute(){
     const entregas = snap.docs.map(d=>({id:d.id, ...d.data()}));
     entregas.forEach(e=> ENTREGAS_HOY[e.clienteId] = e);
     const total = entregas.length;
-    const hechos = entregas.filter(e=>e.estado==='entregado').length;
+    const hechos = entregas.filter(e=>e.estado==='entregado' || e.estado==='rechazado').length;
     document.getElementById('progressFill').style.width = total? `${(hechos/total)*100}%` : '0%';
-    document.getElementById('progressText').textContent = `${hechos} de ${total} entregados`;
+    document.getElementById('progressText').textContent = `${hechos} de ${total} resueltos`;
     document.getElementById('driverEmpty').classList.toggle('hidden', total>0);
     document.getElementById('driverEmptyDebug').textContent = `Buscando: camión = "${currentCamion}" · viaje = ${currentViaje}`;
     renderDebeVolverChofer(entregas);
     // pendientes primero
-    const ordenados = entregas.slice().sort((a,b)=>(a.estado==='entregado')-(b.estado==='entregado'));
+    const ordenados = entregas.slice().sort((a,b)=>(a.estado!=='pendiente')-(b.estado!=='pendiente'));
     document.getElementById('stopsList').innerHTML = ordenados.map(e=>`
-      <div class="stop ${e.estado==='entregado'?'entregado':''}" onclick="openSheet('${e.clienteId}')">
+      <div class="stop ${e.estado!=='pendiente'?'entregado':''}" onclick="openSheet('${e.clienteId}')">
         <div class="info">
           <div class="name">${e.nombre}</div>
-          <div class="meta">${e.direccion||''} ${e.estado==='entregado'? '· '+pagoLabel(e) : ''}</div>
+          <div class="meta">${e.direccion||''} ${e.estado==='entregado'? '· '+pagoLabel(e) : ''}${e.estado==='rechazado' ? '' : ''}</div>
+          ${e.estado==='rechazado' ? `<div style="margin-top:6px;"><span class="badge rechazado">Rechazado${e.observaciones ? ' — '+e.observaciones : ''}</span></div>` : ''}
           ${e.anticipo ? `<div style="margin-top:6px;"><span class="badge ok">Ya transfirió $${e.anticipo.monto} · ${e.anticipo.tipo==='total'?'Total':'Parcial'}</span></div>` : ''}
-          ${e.pedido && e.pedido.length ? `<div style="margin-top:4px;"><span class="badge ok">Pedido: ${e.pedido.length} producto${e.pedido.length>1?'s':''}</span></div>` : ''}
         </div>
-        <div class="chev">${e.estado==='entregado' ? '✓' : '›'}</div>
+        <div class="chev">${e.estado!=='pendiente' ? '✓' : '›'}</div>
       </div>
     `).join('');
   });
@@ -2295,15 +2207,6 @@ function llenarSheet(e){
   confirmarBtn.textContent = 'Confirmar entrega';
   document.getElementById('sheetClientName').textContent = e.nombre;
   document.getElementById('sheetClientAddr').textContent = e.direccion || '';
-
-  const pedidoEl = document.getElementById('pedidoDetalle');
-  if(e.pedido && e.pedido.length){
-    pedidoEl.innerHTML = `<div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-soft); margin-bottom:6px;">Pedido de este cliente</div>` +
-      e.pedido.map(x=>`<div style="font-size:14px; padding:3px 0;">${x.cantidad} × ${x.producto}</div>`).join('');
-    pedidoEl.classList.remove('hidden');
-  } else {
-    pedidoEl.classList.add('hidden');
-  }
 
   const boletaInput = document.getElementById('montoBoleta');
   boletaInput.value = e.montoBoleta || '';
@@ -2397,6 +2300,40 @@ function closeSheet(){
   activeEntregaId = null;
   editandoDesdeAdmin = false;
 }
+
+async function rechazarEntrega(){
+  const motivo = (document.getElementById('obsInput').value || '').trim();
+  if(!motivo){
+    toast('Escribí en Observaciones el motivo del rechazo antes de confirmar');
+    document.getElementById('obsInput').focus();
+    return;
+  }
+  const confirmado = confirm('¿Marcar este pedido como rechazado/cancelado? No se va a pedir forma de pago ni envases.');
+  if(!confirmado) return;
+
+  const btn = document.getElementById('rechazarEntregaBtn');
+  btn.disabled = true;
+  btn.textContent = 'Guardando...';
+
+  const { db, doc, updateDoc } = window.__fb;
+  try {
+    await updateDoc(doc(db,'entregas',activeEntregaId), {
+      estado: 'rechazado',
+      observaciones: motivo,
+      rechazadoPor: activeChoferNombre || currentChoferNombre || null,
+      horaEntrega: new Date().toISOString()
+    });
+    toast('Pedido marcado como rechazado');
+    setTimeout(closeSheet, 400);
+  } catch(err){
+    console.error(err);
+    alert('No se pudo guardar.\n\nError: ' + (err.code || err.message || err));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Pedido rechazado / cancelado';
+  }
+}
+
 function selectPago(tipo){
   selectedPago = tipo;
   document.querySelectorAll('#pagoPills .pill').forEach(p=>p.classList.toggle('selected', p.dataset.pago===tipo));
@@ -2498,7 +2435,8 @@ async function confirmarEntrega(){
 Object.assign(window, {
   doLogin, logout, switchTab, elegirViaje, mostrarSelectorViajeManual,
   importClientes, eliminarCliente, borrarTodosClientes, renderRutas, renderBusquedaRutas, quitarDeRuta, guardarRutaDelDia, onCambioCamionGlobal,
-  openSheet, openSheetAdmin, closeSheet, selectPago, confirmarEntrega,
+  openAgregarClienteMontoSheet, closeAgregarClienteMontoSheet, confirmarAgregarClienteMonto,
+  openSheet, openSheetAdmin, closeSheet, selectPago, confirmarEntrega, rechazarEntrega,
   openAnticipoSheet, closeAnticipoSheet, selectAnticipoTipo, guardarAnticipo, quitarAnticipo,
   openEditarBoletaSheet, closeEditarBoletaSheet, guardarEditarBoleta,
   openCambiarCamionSheet, closeCambiarCamionSheet, guardarCambiarCamion,
@@ -2506,8 +2444,7 @@ Object.assign(window, {
   openAgregarClienteViaje, closeAgregarClienteViaje, volverABuscarCliente, renderBusquedaAgregarCliente, elegirClienteParaAgregar, confirmarAgregarClienteViaje,
   guardarCargaInicial, eliminarViaje, quitarClienteDeViaje, renderClientesTab, renderEnvasesTabla, toggleHistorial,
   guardarPrecioEnvase, actualizarTotalACobrar, recalcularTodosLosSaldos,
-  verDiaAnterior, archivarRepartosViejos, cargarResumenesArchivados,
-  importarPedidos, renderPedidosPendientes, borrarPedidoPendiente, asignarPedidoAViaje
+  verDiaAnterior, archivarRepartosViejos, cargarResumenesArchivados
 });
 </script>
 </body>
