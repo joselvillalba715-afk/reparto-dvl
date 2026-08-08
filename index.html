@@ -1556,6 +1556,8 @@ function selectAnticipoTipo(tipo){
   document.querySelectorAll('#anticipoPills .pill').forEach(p=>p.classList.toggle('selected', p.dataset.tipo===tipo));
   if(tipo === 'total' && anticipoMontoBoleta){
     document.getElementById('anticipoMonto').value = anticipoMontoBoleta;
+  } else if(tipo === 'parcial'){
+    document.getElementById('anticipoMonto').value = '';
   }
 }
 async function guardarAnticipo(){
