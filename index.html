@@ -1385,14 +1385,16 @@ function envLabel(e){
 /* ---------- Marcar transferencia confirmada (admin, antes de que salga el camión) ---------- */
 let anticipoEntregaId = null;
 let anticipoTipo = 'total';
+let anticipoMontoBoleta = 0;
 
 function openAnticipoSheet(entregaId){
   anticipoEntregaId = entregaId;
   const e = window.__ENTREGAS_HOY_ADMIN[entregaId];
   const existente = e.anticipo || null;
+  anticipoMontoBoleta = e.montoBoleta || 0;
   anticipoTipo = existente ? existente.tipo : 'total';
   document.getElementById('anticipoClientName').textContent = e.nombre;
-  document.getElementById('anticipoMonto').value = existente ? existente.monto : '';
+  document.getElementById('anticipoMonto').value = existente ? existente.monto : (anticipoTipo === 'total' ? (anticipoMontoBoleta || '') : '');
   document.getElementById('anticipoNota').value = existente ? (existente.nota || '') : '';
   document.querySelectorAll('#anticipoPills .pill').forEach(p=>p.classList.toggle('selected', p.dataset.tipo===anticipoTipo));
   document.getElementById('anticipoQuitarBtn').classList.toggle('hidden', !existente);
@@ -1552,6 +1554,9 @@ function closeAnticipoSheet(){
 function selectAnticipoTipo(tipo){
   anticipoTipo = tipo;
   document.querySelectorAll('#anticipoPills .pill').forEach(p=>p.classList.toggle('selected', p.dataset.tipo===tipo));
+  if(tipo === 'total' && anticipoMontoBoleta){
+    document.getElementById('anticipoMonto').value = anticipoMontoBoleta;
+  }
 }
 async function guardarAnticipo(){
   const monto = parseFloat(document.getElementById('anticipoMonto').value);
