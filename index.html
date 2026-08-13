@@ -174,6 +174,19 @@
     <!-- CLIENTES -->
     <div id="tab-clientes" class="hidden">
       <div class="card">
+        <h2>Agregar un cliente nuevo</h2>
+        <div class="sub">Para un alta suelta, sin tener que usar el cuadro de importación masiva.</div>
+        <div class="row" style="flex-wrap:wrap;">
+          <div class="field"><label>N° de cliente</label><input type="text" id="nuevoClienteNumero" placeholder="1024"></div>
+          <div class="field"><label>Nombre</label><input type="text" id="nuevoClienteNombre" placeholder="Almacén Don Pepe"></div>
+        </div>
+        <div class="row" style="flex-wrap:wrap;">
+          <div class="field"><label>Dirección</label><input type="text" id="nuevoClienteDireccion" placeholder="Av. Colón 1234"></div>
+          <div class="field"><label>Teléfono</label><input type="text" id="nuevoClienteTelefono" placeholder="3511234567"></div>
+        </div>
+        <button class="btn btn-primary" onclick="agregarClienteSuelto()">Agregar cliente</button>
+      </div>
+      <div class="card">
         <h2>Importar clientes</h2>
         <div class="sub">Pegá el listado exportado del sistema FoxPro. Formato por línea: <b>numero,nombre,direccion,telefono</b> (una fila por cliente, separado por comas). El camión se asigna después, al armar la ruta de cada día — acá no hace falta.</div>
         <div class="field">
@@ -191,7 +204,7 @@
           <input type="text" id="clientesSearch" placeholder="Nombre, número o dirección..." oninput="renderClientesTab()">
         </div>
         <table>
-          <thead><tr><th>N°</th><th>Cliente</th><th>Teléfono</th><th></th></tr></thead>
+          <thead><tr><th>N°</th><th>Cliente</th><th>Teléfono</th><th></th><th></th></tr></thead>
           <tbody id="clientesTable"></tbody>
         </table>
         <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line);">
@@ -527,6 +540,21 @@
       </div>
 
       <button class="btn btn-primary btn-block" onclick="guardarAjusteSaldo()">Guardar ajuste</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL EDITAR CLIENTE (ADMIN) ============ -->
+<div id="editarClienteOverlay" class="overlay hidden" onclick="if(event.target===this)closeEditarClienteSheet()">
+  <div class="sheet">
+    <div class="sheet-wrap">
+      <button class="close-x" onclick="closeEditarClienteSheet()">✕</button>
+      <h3>Editar cliente</h3>
+      <div class="field"><label>N° de cliente</label><input type="text" id="editarClienteNumero"></div>
+      <div class="field"><label>Nombre</label><input type="text" id="editarClienteNombre"></div>
+      <div class="field"><label>Dirección</label><input type="text" id="editarClienteDireccion"></div>
+      <div class="field"><label>Teléfono</label><input type="text" id="editarClienteTelefono"></div>
+      <button class="btn btn-primary btn-block" onclick="guardarEditarCliente()">Guardar cambios</button>
     </div>
   </div>
 </div>
@@ -924,11 +952,12 @@ function renderClientesTab(){
       <td>${c.numero||'—'}</td>
       <td><b>${c.nombre}</b><br><span style="color:var(--ink-soft); font-size:12px;">${c.direccion||''}</span></td>
       <td>${c.telefono||'—'}</td>
+      <td><button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="openEditarClienteSheet('${c.id}')">Editar</button></td>
       <td><button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="eliminarCliente('${c.id}')">Quitar</button></td>
     </tr>
-  `).join('') || `<tr><td colspan="4" style="color:var(--ink-soft);">${q ? 'Sin resultados para "'+q+'".' : 'Todavía no hay clientes cargados.'}</td></tr>`;
+  `).join('') || `<tr><td colspan="5" style="color:var(--ink-soft);">${q ? 'Sin resultados para "'+q+'".' : 'Todavía no hay clientes cargados.'}</td></tr>`;
   if(filtrados.length > 60){
-    document.getElementById('clientesTable').innerHTML += `<tr><td colspan="4" style="color:var(--ink-soft); font-size:12.5px;">Mostrando 60 de ${filtrados.length} resultados — afiná la búsqueda para ver otros.</td></tr>`;
+    document.getElementById('clientesTable').innerHTML += `<tr><td colspan="5" style="color:var(--ink-soft); font-size:12.5px;">Mostrando 60 de ${filtrados.length} resultados — afiná la búsqueda para ver otros.</td></tr>`;
   }
 }
 
@@ -937,6 +966,63 @@ async function eliminarCliente(id){
   await deleteDoc(doc(db, 'clientes_reparto', id));
   await loadClientes();
   renderClientesTab();
+}
+
+async function agregarClienteSuelto(){
+  const numero = document.getElementById('nuevoClienteNumero').value.trim();
+  const nombre = document.getElementById('nuevoClienteNombre').value.trim();
+  const direccion = document.getElementById('nuevoClienteDireccion').value.trim();
+  const telefono = document.getElementById('nuevoClienteTelefono').value.trim();
+  if(!nombre){ toast('Cargá al menos el nombre del cliente'); return; }
+  const { db, collection, addDoc } = window.__fb;
+  try {
+    await addDoc(collection(db, 'clientes_reparto'), { numero, nombre, direccion, telefono, activo:true, envaseSaldo:{} });
+    toast(`${nombre} agregado`);
+    document.getElementById('nuevoClienteNumero').value = '';
+    document.getElementById('nuevoClienteNombre').value = '';
+    document.getElementById('nuevoClienteDireccion').value = '';
+    document.getElementById('nuevoClienteTelefono').value = '';
+    await loadClientes();
+    renderClientesTab();
+  } catch(err){
+    console.error(err);
+    alert('No se pudo agregar el cliente.\n\nError: ' + (err.code || err.message || err));
+  }
+}
+
+/* ---------- Editar un cliente ya cargado (sin perder su historial de envases) ---------- */
+let editarClienteId = null;
+function openEditarClienteSheet(id){
+  const cliente = CLIENTES.find(c=>c.id===id);
+  if(!cliente) return;
+  editarClienteId = id;
+  document.getElementById('editarClienteNumero').value = cliente.numero || '';
+  document.getElementById('editarClienteNombre').value = cliente.nombre || '';
+  document.getElementById('editarClienteDireccion').value = cliente.direccion || '';
+  document.getElementById('editarClienteTelefono').value = cliente.telefono || '';
+  document.getElementById('editarClienteOverlay').classList.remove('hidden');
+}
+function closeEditarClienteSheet(){
+  document.getElementById('editarClienteOverlay').classList.add('hidden');
+  editarClienteId = null;
+}
+async function guardarEditarCliente(){
+  const numero = document.getElementById('editarClienteNumero').value.trim();
+  const nombre = document.getElementById('editarClienteNombre').value.trim();
+  const direccion = document.getElementById('editarClienteDireccion').value.trim();
+  const telefono = document.getElementById('editarClienteTelefono').value.trim();
+  if(!nombre){ toast('El nombre no puede quedar vacío'); return; }
+  const { db, doc, updateDoc } = window.__fb;
+  try {
+    await updateDoc(doc(db,'clientes_reparto', editarClienteId), { numero, nombre, direccion, telefono });
+    toast('Cliente actualizado');
+    closeEditarClienteSheet();
+    await loadClientes();
+    renderClientesTab();
+  } catch(err){
+    console.error(err);
+    alert('No se pudo guardar.\n\nError: ' + (err.code || err.message || err));
+  }
 }
 
 async function borrarTodosClientes(){
@@ -2452,6 +2538,7 @@ async function confirmarEntrega(){
 Object.assign(window, {
   doLogin, logout, switchTab, elegirViaje, mostrarSelectorViajeManual,
   importClientes, eliminarCliente, borrarTodosClientes, renderRutas, renderBusquedaRutas, quitarDeRuta, guardarRutaDelDia, onCambioCamionGlobal,
+  agregarClienteSuelto, openEditarClienteSheet, closeEditarClienteSheet, guardarEditarCliente,
   openAgregarClienteMontoSheet, closeAgregarClienteMontoSheet, confirmarAgregarClienteMonto,
   openSheet, openSheetAdmin, closeSheet, selectPago, confirmarEntrega, rechazarEntrega,
   openAnticipoSheet, closeAnticipoSheet, selectAnticipoTipo, guardarAnticipo, quitarAnticipo,
