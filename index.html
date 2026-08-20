@@ -923,14 +923,19 @@ function renderBusquedaDeudorChofer(){
     el.innerHTML = `<div class="sub">Por ahora no hay ningún cliente con deuda de envases registrada. Si sabés que alguien debe, pedile al administrador que apriete "Recalcular saldos" en su panel.</div>`;
     return;
   }
-  if(q.length < 2){
-    el.innerHTML = `<div class="sub">Escribí al menos 2 letras para buscar entre los ${DEUDORES_CACHE.length} clientes con deuda de envases.</div>`;
-    return;
-  }
-  const matches = DEUDORES_CACHE.filter(c =>
-    (c.nombre||'').toLowerCase().includes(q) || (c.numero||'').toLowerCase().includes(q)
-  ).slice(0, 20);
-  el.innerHTML = matches.map(c=>{
+
+  const ordenados = DEUDORES_CACHE.slice().sort((a,b)=>{
+    const totalA = Object.values(a.envaseSaldo||{}).reduce((x,y)=>x+y,0);
+    const totalB = Object.values(b.envaseSaldo||{}).reduce((x,y)=>x+y,0);
+    return totalB - totalA;
+  });
+
+  const lista = q.length >= 2
+    ? ordenados.filter(c => (c.nombre||'').toLowerCase().includes(q) || (c.numero||'').toLowerCase().includes(q))
+    : ordenados;
+
+  const mostrar = lista.slice(0, 150);
+  const filasHtml = mostrar.map(c=>{
     const badges = TIPOS_ENVASE.filter(t=>c.envaseSaldo?.[t]).map(t=>`<span class="badge debe">${t}: ${formatCajones(t, c.envaseSaldo[t])}</span>`).join(' ');
     return `
       <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid #ece9df; flex-wrap:wrap;">
@@ -938,6 +943,15 @@ function renderBusquedaDeudorChofer(){
         <button class="btn btn-primary" style="padding:7px 14px; font-size:12.5px;" onclick="elegirDeudorChofer('${c.id}','${(c.nombre||'').replace(/'/g,"\\'")}')">Elegir</button>
       </div>`;
   }).join('') || `<div class="sub">No encontré clientes deudores con "${q}".</div>`;
+
+  const encabezado = q.length >= 2
+    ? `<div class="sub" style="margin-bottom:10px;">${lista.length} resultado${lista.length===1?'':'s'} para "${q}"</div>`
+    : `<div class="sub" style="margin-bottom:10px;">${lista.length} clientes con deuda, ordenados de mayor a menor.</div>`;
+  const pie = lista.length > 150
+    ? `<div class="sub" style="margin-top:8px;">Mostrando 150 de ${lista.length} — usá el buscador para acotar.</div>`
+    : '';
+
+  el.innerHTML = encabezado + filasHtml + pie;
 }
 function elegirDeudorChofer(clienteId, nombre){
   driverDeudorElegidoId = clienteId;
