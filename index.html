@@ -276,8 +276,18 @@
             <input type="number" min="0" id="precioEnvaseInput" placeholder="2000">
           </div>
           <div id="porCajonInputs" style="display:flex; gap:10px; flex-wrap:wrap;"></div>
+          <div class="field" style="margin-bottom:0;">
+            <label>Tu WhatsApp (con código de país, sin +)</label>
+            <input type="text" id="whatsappAdminInput" placeholder="5493511234567" style="width:180px;">
+          </div>
           <button class="btn btn-primary" onclick="guardarPrecioEnvase()">Guardar</button>
         </div>
+        <div class="sub" style="margin-top:8px;">A ese número le va a abrir WhatsApp cuando un chofer pida aprobar un ajuste de envases de un cliente fuera de su ruta.</div>
+      </div>
+      <div class="card">
+        <h2>Solicitudes de ajuste de envases pendientes</h2>
+        <div class="sub">Movimientos que un chofer anotó para un cliente que no estaba en su ruta del día — necesitan tu aprobación para aplicarse.</div>
+        <div id="solicitudesEnvaseList"></div>
       </div>
       <div class="card">
         <h2>Consolidado de hoy por camión</h2>
@@ -359,7 +369,8 @@
 <div id="driverView" class="hidden">
   <header class="topbar">
     <div class="title"><span class="mark" id="driverCamionLabel">Camión</span> Mi reparto</div>
-    <div style="display:flex; gap:8px;">
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <button onclick="abrirCuentaCorrienteChofer()">Cuenta corriente</button>
       <button onclick="mostrarSelectorViajeManual()">Cambiar viaje</button>
       <button onclick="logout()">Salir</button>
     </div>
@@ -377,6 +388,45 @@
     </div>
     <div class="route-list" id="stopsList"></div>
     <div id="driverEmpty" class="empty hidden">No hay clientes asignados para hoy en este camión.<br>Pedile al administrador que arme el reparto del día.<br><span id="driverEmptyDebug" style="font-family:var(--mono); font-size:11px; color:var(--ink-soft);"></span></div>
+  </main>
+</div>
+
+<!-- ============ CUENTA CORRIENTE (CHOFER) — solo clientes deudores ============ -->
+<div id="driverCuentaCorrienteView" class="hidden">
+  <header class="topbar">
+    <div class="title"><span class="mark">Cuenta corriente</span> Clientes deudores</div>
+    <button onclick="cerrarCuentaCorrienteChofer()">Volver</button>
+  </header>
+  <main>
+    <div class="card">
+      <div class="sub">Solo se muestran clientes que deben cajones (nombre y saldo — sin dirección ni teléfono). Si tenés que anotar un movimiento de un cliente que no está en tu ruta de hoy, buscalo acá. Queda pendiente de aprobación del administrador.</div>
+      <div class="field">
+        <label>Buscar cliente deudor</label>
+        <input type="text" id="driverDeudorSearch" placeholder="Nombre o número..." oninput="renderBusquedaDeudorChofer()">
+      </div>
+      <div id="driverDeudorResults"></div>
+    </div>
+    <div id="driverSolicitudForm" class="card hidden">
+      <div class="sub" style="margin-bottom:10px;">Cliente elegido: <b id="driverSolicitudNombre"></b> <button class="btn btn-ghost" style="padding:3px 8px; font-size:11px;" onclick="volverABuscarDeudor()">Cambiar</button></div>
+      <div class="field">
+        <label>Producto</label>
+        <select id="driverSolicitudTipo"></select>
+      </div>
+      <label>Tipo de movimiento</label>
+      <div class="pill-group" id="driverSolicitudPills">
+        <div class="pill selected" data-mov="devolvieron" onclick="selectDriverSolicitudMov('devolvieron')">Devolvió cajones</div>
+        <div class="pill" data-mov="prestaron" onclick="selectDriverSolicitudMov('prestaron')">Se le prestaron cajones</div>
+      </div>
+      <div class="field">
+        <label>Cantidad de cajones</label>
+        <input type="number" min="0" step="0.5" id="driverSolicitudCantidad" placeholder="0">
+      </div>
+      <div class="field">
+        <label>Nota (opcional)</label>
+        <input type="text" id="driverSolicitudNota" placeholder="Ej: me lo crucé en la esquina">
+      </div>
+      <button class="btn btn-primary btn-block" onclick="enviarSolicitudEnvaseChofer()">Enviar para aprobar</button>
+    </div>
   </main>
 </div>
 
@@ -723,6 +773,8 @@ async function doLogin(){
   }
 }
 
+let WHATSAPP_ADMIN = '';
+
 async function loadPrecioEnvase(){
   const { db, doc, getDoc } = window.__fb;
   const snap = await getDoc(doc(db, 'configuracion_reparto', 'precios'));
@@ -730,6 +782,7 @@ async function loadPrecioEnvase(){
     const data = snap.data();
     if(data.envase) PRECIO_ENVASE = data.envase;
     if(data.porCajon) BOTELLAS_POR_CAJON = { ...BOTELLAS_POR_CAJON, ...data.porCajon };
+    if(data.whatsappAdmin) WHATSAPP_ADMIN = data.whatsappAdmin;
   }
   const span = document.getElementById('precioEnvaseTexto');
   if(span) span.textContent = PRECIO_ENVASE;
@@ -744,10 +797,12 @@ async function guardarPrecioEnvase(){
     const v = parseInt(inp?.value);
     porCajon[tipo] = v > 0 ? v : (BOTELLAS_POR_CAJON[tipo] || 1);
   });
+  const whatsappAdmin = document.getElementById('whatsappAdminInput')?.value.trim().replace(/\D/g,'') || '';
   const { db, doc, setDoc } = window.__fb;
-  await setDoc(doc(db, 'configuracion_reparto', 'precios'), { envase: valor, porCajon }, {merge:true});
+  await setDoc(doc(db, 'configuracion_reparto', 'precios'), { envase: valor, porCajon, whatsappAdmin }, {merge:true});
   PRECIO_ENVASE = valor;
   BOTELLAS_POR_CAJON = { ...BOTELLAS_POR_CAJON, ...porCajon };
+  WHATSAPP_ADMIN = whatsappAdmin;
   const span = document.getElementById('precioEnvaseTexto');
   if(span) span.textContent = PRECIO_ENVASE;
   toast('Configuración guardada');
@@ -833,6 +888,102 @@ function elegirViaje(v){
   currentViaje = v;
   document.getElementById('viajePicker').classList.add('hidden');
   entrarComoChofer();
+}
+
+/* ---------- Cuenta corriente para el chofer — solo deudores, con solicitud de aprobación ---------- */
+let DEUDORES_CACHE = [];
+let driverDeudorElegidoId = null;
+let driverDeudorElegidoNombre = '';
+let driverSolicitudMov = 'devolvieron';
+
+async function abrirCuentaCorrienteChofer(){
+  document.getElementById('driverView').classList.add('hidden');
+  document.getElementById('driverCuentaCorrienteView').classList.remove('hidden');
+  document.getElementById('driverDeudorSearch').value = '';
+  document.getElementById('driverDeudorResults').innerHTML = '';
+  document.getElementById('driverSolicitudForm').classList.add('hidden');
+  try {
+    const { db, collection, getDocs } = window.__fb;
+    const snap = await getDocs(collection(db,'deudores_envases'));
+    DEUDORES_CACHE = snap.docs.map(d=>({id:d.id, ...d.data()}));
+  } catch(err){
+    console.error(err);
+    toast('No se pudo cargar la lista de deudores');
+  }
+}
+function cerrarCuentaCorrienteChofer(){
+  document.getElementById('driverCuentaCorrienteView').classList.add('hidden');
+  document.getElementById('driverView').classList.remove('hidden');
+}
+function renderBusquedaDeudorChofer(){
+  const q = (document.getElementById('driverDeudorSearch')?.value || '').trim().toLowerCase();
+  const el = document.getElementById('driverDeudorResults');
+  if(q.length < 2){
+    el.innerHTML = `<div class="sub">Escribí al menos 2 letras para buscar entre los ${DEUDORES_CACHE.length} clientes con deuda de envases.</div>`;
+    return;
+  }
+  const matches = DEUDORES_CACHE.filter(c =>
+    (c.nombre||'').toLowerCase().includes(q) || (c.numero||'').toLowerCase().includes(q)
+  ).slice(0, 20);
+  el.innerHTML = matches.map(c=>{
+    const badges = TIPOS_ENVASE.filter(t=>c.envaseSaldo?.[t]).map(t=>`<span class="badge debe">${t}: ${formatCajones(t, c.envaseSaldo[t])}</span>`).join(' ');
+    return `
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid #ece9df; flex-wrap:wrap;">
+        <div><b>${c.nombre}</b> ${c.numero?`<span style="color:var(--ink-soft); font-size:12px;">#${c.numero}</span>`:''}<div style="margin-top:3px;">${badges}</div></div>
+        <button class="btn btn-primary" style="padding:7px 14px; font-size:12.5px;" onclick="elegirDeudorChofer('${c.id}','${(c.nombre||'').replace(/'/g,"\\'")}')">Elegir</button>
+      </div>`;
+  }).join('') || `<div class="sub">No encontré clientes deudores con "${q}".</div>`;
+}
+function elegirDeudorChofer(clienteId, nombre){
+  driverDeudorElegidoId = clienteId;
+  driverDeudorElegidoNombre = nombre;
+  driverSolicitudMov = 'devolvieron';
+  document.getElementById('driverSolicitudNombre').textContent = nombre;
+  document.getElementById('driverSolicitudTipo').innerHTML = TIPOS_ENVASE.map(t=>`<option value="${t}">${t}</option>`).join('');
+  document.getElementById('driverSolicitudCantidad').value = '';
+  document.getElementById('driverSolicitudNota').value = '';
+  document.querySelectorAll('#driverSolicitudPills .pill').forEach(p=>p.classList.toggle('selected', p.dataset.mov==='devolvieron'));
+  document.getElementById('driverSolicitudForm').classList.remove('hidden');
+}
+function volverABuscarDeudor(){
+  driverDeudorElegidoId = null;
+  document.getElementById('driverSolicitudForm').classList.add('hidden');
+}
+function selectDriverSolicitudMov(mov){
+  driverSolicitudMov = mov;
+  document.querySelectorAll('#driverSolicitudPills .pill').forEach(p=>p.classList.toggle('selected', p.dataset.mov===mov));
+}
+async function enviarSolicitudEnvaseChofer(){
+  if(!driverDeudorElegidoId) return;
+  const tipo = document.getElementById('driverSolicitudTipo').value;
+  const cantidad = parseFloat(document.getElementById('driverSolicitudCantidad').value) || 0;
+  const nota = document.getElementById('driverSolicitudNota').value.trim();
+  if(!cantidad){ toast('Cargá una cantidad'); return; }
+
+  const { db, collection, addDoc } = window.__fb;
+  try {
+    await addDoc(collection(db,'solicitudes_ajuste_envase'), {
+      clienteId: driverDeudorElegidoId, nombreCliente: driverDeudorElegidoNombre,
+      tipo, movimiento: driverSolicitudMov, cantidad, nota,
+      choferNombre: currentChoferNombre || null, camion: currentCamion,
+      fecha: todayStr(), creadoEn: new Date().toISOString()
+    });
+    toast('Solicitud enviada — falta que el administrador la apruebe');
+
+    // Abre WhatsApp con el aviso ya escrito, listo para enviar con un toque
+    if(WHATSAPP_ADMIN){
+      const movTxt = driverSolicitudMov === 'prestaron' ? 'le presté' : 'me devolvió';
+      const msg = `Hola! Te dejo pendiente de aprobar un ajuste de envases:\n${driverDeudorElegidoNombre} — ${tipo}: ${movTxt} ${cantidad} cajones.${nota ? ' Nota: '+nota : ''}\nCamión: ${currentCamion}${currentChoferNombre ? ' — '+currentChoferNombre : ''}`;
+      window.open(`https://wa.me/${WHATSAPP_ADMIN}?text=${encodeURIComponent(msg)}`, '_blank');
+    }
+
+    volverABuscarDeudor();
+    document.getElementById('driverDeudorSearch').value = '';
+    document.getElementById('driverDeudorResults').innerHTML = '';
+  } catch(err){
+    console.error(err);
+    alert('No se pudo enviar la solicitud.\n\nError: ' + (err.code || err.message || err));
+  }
 }
 
 function entrarComoChofer(){
@@ -1585,46 +1736,65 @@ function selectAjustarSaldoMov(mov){
   ajustarSaldoMov = mov;
   document.querySelectorAll('#ajustarSaldoPills .pill').forEach(p=>p.classList.toggle('selected', p.dataset.mov===mov));
 }
+// Lógica reutilizable: aplica un movimiento de envases a un cliente (usada tanto por el
+// ajuste manual directo del admin, como al aprobar una solicitud hecha por un chofer).
+async function aplicarAjusteEnvase(clienteId, tipo, movimiento, cantidad, nota, responsable){
+  const { db, doc, runTransaction, setDoc, deleteDoc } = window.__fb;
+  const clienteRef = doc(db,'clientes_reparto', clienteId);
+  const fechaHoy = todayStr();
+  const ajusteId = `manual_${Date.now()}`;
+  let nombreCliente = '', numeroCliente = '', saldoFinal = {};
+
+  await runTransaction(db, async (tx)=>{
+    const snap = await tx.get(clienteRef);
+    const data = snap.exists() ? snap.data() : {};
+    nombreCliente = data.nombre || '';
+    numeroCliente = data.numero || '';
+    const saldoActual = data.envaseSaldo || {};
+    const debeDesdeActual = data.envaseDebeDesde || {};
+    const historialActual = data.envaseHistorial || {};
+
+    const diff = movimiento === 'prestaron' ? cantidad : -cantidad;
+    const saldoAnterior = saldoActual[tipo] || 0;
+    const nuevoSaldo = {...saldoActual, [tipo]: saldoAnterior + diff};
+    const nuevoDebeDesde = {...debeDesdeActual};
+    if(nuevoSaldo[tipo] > 0 && saldoAnterior <= 0){
+      nuevoDebeDesde[tipo] = fechaHoy;
+    } else if(nuevoSaldo[tipo] <= 0){
+      delete nuevoDebeDesde[tipo];
+    }
+    const nuevoHistorial = {
+      ...historialActual,
+      [ajusteId]: {
+        fecha: fechaHoy,
+        manual: true,
+        nota,
+        chofer: responsable || null,
+        movimientos: { [tipo]: { prestaron: movimiento==='prestaron'?cantidad:0, devolvieron: movimiento==='devolvieron'?cantidad:0 } }
+      }
+    };
+    saldoFinal = nuevoSaldo;
+    tx.update(clienteRef, { envaseSaldo: nuevoSaldo, envaseDebeDesde: nuevoDebeDesde, envaseHistorial: nuevoHistorial });
+  });
+
+  // Sincroniza el espejo liviano de deudores (solo nombre + saldo, sin dirección ni teléfono)
+  const debeAlgo = Object.values(saldoFinal).some(v => v > 0);
+  const espejoRef = doc(db, 'deudores_envases', clienteId);
+  if(debeAlgo){
+    await setDoc(espejoRef, { nombre: nombreCliente, numero: numeroCliente, envaseSaldo: saldoFinal });
+  } else {
+    await deleteDoc(espejoRef).catch(()=>{});
+  }
+}
+
 async function guardarAjusteSaldo(){
   const tipo = document.getElementById('ajustarSaldoTipo').value;
   const cantidad = parseFloat(document.getElementById('ajustarSaldoCantidad').value) || 0;
   const nota = document.getElementById('ajustarSaldoNota').value.trim();
   const responsable = document.getElementById('ajustarSaldoResponsable').value.trim();
   if(!cantidad){ toast('Cargá una cantidad'); return; }
-
-  const { db, doc, runTransaction } = window.__fb;
-  const clienteRef = doc(db,'clientes_reparto', ajustarSaldoClienteId);
-  const fechaHoy = todayStr();
-  const ajusteId = `manual_${Date.now()}`;
-
   try {
-    await runTransaction(db, async (tx)=>{
-      const snap = await tx.get(clienteRef);
-      const saldoActual = snap.exists() ? (snap.data().envaseSaldo||{}) : {};
-      const debeDesdeActual = snap.exists() ? (snap.data().envaseDebeDesde||{}) : {};
-      const historialActual = snap.exists() ? (snap.data().envaseHistorial||{}) : {};
-
-      const diff = ajustarSaldoMov === 'prestaron' ? cantidad : -cantidad;
-      const saldoAnterior = saldoActual[tipo] || 0;
-      const nuevoSaldo = {...saldoActual, [tipo]: saldoAnterior + diff};
-      const nuevoDebeDesde = {...debeDesdeActual};
-      if(nuevoSaldo[tipo] > 0 && saldoAnterior <= 0){
-        nuevoDebeDesde[tipo] = fechaHoy;
-      } else if(nuevoSaldo[tipo] <= 0){
-        delete nuevoDebeDesde[tipo];
-      }
-      const nuevoHistorial = {
-        ...historialActual,
-        [ajusteId]: {
-          fecha: fechaHoy,
-          manual: true,
-          nota,
-          chofer: responsable || null,
-          movimientos: { [tipo]: { prestaron: ajustarSaldoMov==='prestaron'?cantidad:0, devolvieron: ajustarSaldoMov==='devolvieron'?cantidad:0 } }
-        }
-      };
-      tx.update(clienteRef, { envaseSaldo: nuevoSaldo, envaseDebeDesde: nuevoDebeDesde, envaseHistorial: nuevoHistorial });
-    });
+    await aplicarAjusteEnvase(ajustarSaldoClienteId, tipo, ajustarSaldoMov, cantidad, nota, responsable);
     toast('Ajuste guardado');
     closeAjustarSaldoSheet();
     await loadClientes();
@@ -1634,6 +1804,63 @@ async function guardarAjusteSaldo(){
     alert('No se pudo guardar el ajuste.\n\nError: ' + (err.code || err.message || err));
   }
 }
+
+/* ---------- Solicitudes de ajuste de envases hechas por un chofer (necesitan aprobación) ---------- */
+async function renderSolicitudesEnvase(){
+  const el = document.getElementById('solicitudesEnvaseList');
+  if(!el) return;
+  const { db, collection, getDocs } = window.__fb;
+  try {
+    const snap = await getDocs(collection(db,'solicitudes_ajuste_envase'));
+    const solicitudes = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    el.innerHTML = solicitudes.map(s=>`
+      <div style="border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:8px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px;">
+          <div>
+            <b>${s.nombreCliente}</b>
+            <div class="sub" style="margin:2px 0 0;">${s.tipo} — ${s.movimiento==='prestaron'?'Prestó':'Devolvió'} ${s.cantidad} cajones${s.nota ? ' — '+s.nota : ''}</div>
+            <div class="sub" style="margin:2px 0 0;">Pedido por: ${s.choferNombre||'—'} (${s.camion||'—'})</div>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="aprobarSolicitudEnvase('${s.id}')">Aprobar</button>
+            <button class="btn btn-ghost" style="padding:6px 12px; font-size:12px; color:var(--red); border-color:var(--red);" onclick="rechazarSolicitudEnvase('${s.id}')">Rechazar</button>
+          </div>
+        </div>
+      </div>
+    `).join('') || `<div class="sub">No hay solicitudes pendientes.</div>`;
+  } catch(err){
+    console.error(err);
+    el.innerHTML = `<div class="sub">No se pudo cargar (${err.code||err.message}).</div>`;
+  }
+}
+
+async function aprobarSolicitudEnvase(solicitudId){
+  const { db, doc, getDoc, deleteDoc } = window.__fb;
+  const snap = await getDoc(doc(db,'solicitudes_ajuste_envase', solicitudId));
+  if(!snap.exists()){ toast('Esa solicitud ya no está'); renderSolicitudesEnvase(); return; }
+  const s = snap.data();
+  try {
+    await aplicarAjusteEnvase(s.clienteId, s.tipo, s.movimiento, s.cantidad, s.nota, s.choferNombre);
+    await deleteDoc(doc(db,'solicitudes_ajuste_envase', solicitudId));
+    toast('Solicitud aprobada y aplicada');
+    await loadClientes();
+    renderEnvasesTabla();
+    renderSolicitudesEnvase();
+  } catch(err){
+    console.error(err);
+    alert('No se pudo aprobar.\n\nError: ' + (err.code || err.message || err));
+  }
+}
+
+async function rechazarSolicitudEnvase(solicitudId){
+  const confirmado = confirm('¿Rechazar esta solicitud? No se va a aplicar ningún cambio.');
+  if(!confirmado) return;
+  const { db, doc, deleteDoc } = window.__fb;
+  await deleteDoc(doc(db,'solicitudes_ajuste_envase', solicitudId));
+  toast('Solicitud rechazada');
+  renderSolicitudesEnvase();
+}
+
 function closeAnticipoSheet(){
   document.getElementById('anticipoOverlay').classList.add('hidden');
   anticipoEntregaId = null;
@@ -1721,6 +1948,13 @@ async function recalcularTodosLosSaldos(){
         });
 
         batch.update(doc(db,'clientes_reparto', cliente.id), { envaseSaldo: nuevoSaldo, envaseDebeDesde: nuevoDebeDesde });
+        const debeAlgo = Object.values(nuevoSaldo).some(v => v > 0);
+        const espejoRef = doc(db, 'deudores_envases', cliente.id);
+        if(debeAlgo){
+          batch.set(espejoRef, { nombre: cliente.nombre||'', numero: cliente.numero||'', envaseSaldo: nuevoSaldo });
+        } else {
+          batch.delete(espejoRef);
+        }
         corregidos++;
       });
       await batch.commit();
@@ -1920,6 +2154,8 @@ async function renderEnvases(){
   await loadClientes();
   const precioInput = document.getElementById('precioEnvaseInput');
   if(precioInput) precioInput.value = PRECIO_ENVASE;
+  const whatsappInput = document.getElementById('whatsappAdminInput');
+  if(whatsappInput) whatsappInput.value = WHATSAPP_ADMIN;
   const porCajonEl = document.getElementById('porCajonInputs');
   if(porCajonEl){
     porCajonEl.innerHTML = TIPOS_ENVASE.map(tipo => `
@@ -1929,6 +2165,7 @@ async function renderEnvases(){
       </div>
     `).join('');
   }
+  renderSolicitudesEnvase();
   renderEnvasesTabla();
   renderConsolidado();
 }
@@ -2466,7 +2703,7 @@ async function confirmarEntrega(){
   const totalCobrado = actualizarTotalACobrar();
   const observaciones = document.getElementById('obsInput').value.trim();
 
-  const { db, doc, updateDoc, getDoc, runTransaction } = window.__fb;
+  const { db, doc, updateDoc, getDoc, runTransaction, setDoc, deleteDoc } = window.__fb;
   const entregaRef = doc(db,'entregas',activeEntregaId);
 
   btn.disabled = true;
@@ -2489,6 +2726,7 @@ async function confirmarEntrega(){
     if(tiposAfectados.size){
       const clienteRef = doc(db,'clientes_reparto', activeClienteId);
       const fechaHoy = todayStr();
+      let saldoFinalEntrega = {};
       await runTransaction(db, async (tx)=>{
         const snap = await tx.get(clienteRef);
         const saldoActual = snap.exists() ? (snap.data().envaseSaldo||{}) : {};
@@ -2522,7 +2760,20 @@ async function confirmarEntrega(){
           delete nuevoHistorial[activeEntregaId];
         }
         tx.update(clienteRef, { envaseSaldo: nuevoSaldo, envaseDebeDesde: nuevoDebeDesde, envaseHistorial: nuevoHistorial });
+        saldoFinalEntrega = nuevoSaldo;
       });
+
+      // Sincroniza el espejo liviano de deudores (solo nombre + saldo, para que los choferes
+      // puedan encontrar a este cliente si le tienen que anotar algo fuera de su ruta)
+      const debeAlgoEntrega = Object.values(saldoFinalEntrega).some(v => v > 0);
+      const espejoRefEntrega = doc(db, 'deudores_envases', activeClienteId);
+      if(debeAlgoEntrega){
+        const nombreParaEspejo = document.getElementById('sheetClientName').textContent || '';
+        const clienteCache = (typeof CLIENTES !== 'undefined' ? CLIENTES.find(c=>c.id===activeClienteId) : null);
+        await setDoc(espejoRefEntrega, { nombre: nombreParaEspejo, numero: clienteCache?.numero || '', envaseSaldo: saldoFinalEntrega }).catch(()=>{});
+      } else {
+        await deleteDoc(espejoRefEntrega).catch(()=>{});
+      }
     }
     btn.textContent = '✓ Guardado';
     toast('Entrega guardada correctamente');
@@ -2538,6 +2789,8 @@ async function confirmarEntrega(){
 // exponer funciones usadas en HTML inline
 Object.assign(window, {
   doLogin, logout, switchTab, elegirViaje, mostrarSelectorViajeManual,
+  abrirCuentaCorrienteChofer, cerrarCuentaCorrienteChofer, renderBusquedaDeudorChofer, elegirDeudorChofer, volverABuscarDeudor, selectDriverSolicitudMov, enviarSolicitudEnvaseChofer,
+  aprobarSolicitudEnvase, rechazarSolicitudEnvase,
   importClientes, eliminarCliente, borrarTodosClientes, renderRutas, renderBusquedaRutas, quitarDeRuta, guardarRutaDelDia, onCambioCamionGlobal,
   agregarClienteSuelto, openEditarClienteSheet, closeEditarClienteSheet, guardarEditarCliente,
   openAgregarClienteMontoSheet, closeAgregarClienteMontoSheet, confirmarAgregarClienteMonto,
