@@ -900,8 +900,8 @@ async function abrirCuentaCorrienteChofer(){
   document.getElementById('driverView').classList.add('hidden');
   document.getElementById('driverCuentaCorrienteView').classList.remove('hidden');
   document.getElementById('driverDeudorSearch').value = '';
-  document.getElementById('driverDeudorResults').innerHTML = '';
   document.getElementById('driverSolicitudForm').classList.add('hidden');
+  document.getElementById('driverDeudorResults').innerHTML = `<div class="sub">Cargando...</div>`;
   try {
     const { db, collection, getDocs } = window.__fb;
     const snap = await getDocs(collection(db,'deudores_envases'));
@@ -910,6 +910,7 @@ async function abrirCuentaCorrienteChofer(){
     console.error(err);
     toast('No se pudo cargar la lista de deudores');
   }
+  renderBusquedaDeudorChofer();
 }
 function cerrarCuentaCorrienteChofer(){
   document.getElementById('driverCuentaCorrienteView').classList.add('hidden');
@@ -918,6 +919,10 @@ function cerrarCuentaCorrienteChofer(){
 function renderBusquedaDeudorChofer(){
   const q = (document.getElementById('driverDeudorSearch')?.value || '').trim().toLowerCase();
   const el = document.getElementById('driverDeudorResults');
+  if(!DEUDORES_CACHE.length){
+    el.innerHTML = `<div class="sub">Por ahora no hay ningún cliente con deuda de envases registrada. Si sabés que alguien debe, pedile al administrador que apriete "Recalcular saldos" en su panel.</div>`;
+    return;
+  }
   if(q.length < 2){
     el.innerHTML = `<div class="sub">Escribí al menos 2 letras para buscar entre los ${DEUDORES_CACHE.length} clientes con deuda de envases.</div>`;
     return;
