@@ -157,12 +157,21 @@
       <div class="tab active" data-tab="dashboard" onclick="switchTab('dashboard')">Hoy</div>
       <div class="tab" data-tab="clientes" onclick="switchTab('clientes')">Clientes</div>
       <div class="tab" data-tab="rutas" onclick="switchTab('rutas')">Armar rutas</div>
-      <div class="tab" data-tab="envases" onclick="switchTab('envases')">Control de viajes</div>
+      <div class="tab" data-tab="envases" onclick="switchTab('envases')">Control de viajes <span id="solicitudesBadge" class="hidden" style="background:var(--red); color:#fff; border-radius:99px; padding:1px 7px; font-size:10.5px; margin-left:4px;">0</span></div>
       <div class="tab" data-tab="historial" onclick="switchTab('historial')">Historial</div>
     </div>
 
     <!-- HOY -->
     <div id="tab-dashboard">
+      <div id="alertaSolicitudesCard" class="card hidden" style="border:2px solid var(--red); background:var(--red-bg);">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+          <div>
+            <h2 style="margin:0; color:var(--red);">⚠ Tenés solicitudes de envases sin aprobar</h2>
+            <div class="sub" id="alertaSolicitudesTexto" style="margin:4px 0 0;"></div>
+          </div>
+          <button class="btn btn-primary" onclick="switchTab('envases')">Ver y aprobar</button>
+        </div>
+      </div>
       <div class="card">
         <h2>Estado del día</h2>
         <div class="sub" id="dashDate">—</div>
@@ -834,6 +843,7 @@ async function routeAfterLogin(user){
     renderRutas();
     renderDashboard();
     renderEnvases();
+    iniciarMonitoreoSolicitudes();
   } else {
     currentRole = 'driver';
     currentCamion = perfil.camion;
@@ -1825,6 +1835,79 @@ async function guardarAjusteSaldo(){
 }
 
 /* ---------- Solicitudes de ajuste de envases hechas por un chofer (necesitan aprobación) ---------- */
+let ultimaCantidadSolicitudes = null;
+let sonidoAlertaListo = null;
+
+function pedirPermisoNotificaciones(){
+  if('Notification' in window && Notification.permission === 'default'){
+    Notification.requestPermission();
+  }
+}
+
+function sonarAlerta(){
+  try {
+    if(!sonidoAlertaListo){
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      sonidoAlertaListo = new AudioCtx();
+    }
+    const ctx = sonidoAlertaListo;
+    [0, 0.18].forEach(delay=>{
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.15, ctx.currentTime + delay);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.15);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(ctx.currentTime + delay);
+      osc.stop(ctx.currentTime + delay + 0.16);
+    });
+  } catch(e){ /* el navegador puede bloquear audio sin interacción previa, no pasa nada */ }
+}
+
+function iniciarMonitoreoSolicitudes(){
+  pedirPermisoNotificaciones();
+  const { db, collection, onSnapshot } = window.__fb;
+  onSnapshot(collection(db,'solicitudes_ajuste_envase'), (snap)=>{
+    const cantidad = snap.size;
+    const badge = document.getElementById('solicitudesBadge');
+    const alertaCard = document.getElementById('alertaSolicitudesCard');
+    const alertaTexto = document.getElementById('alertaSolicitudesTexto');
+
+    if(badge){
+      badge.textContent = cantidad;
+      badge.classList.toggle('hidden', cantidad === 0);
+    }
+    if(alertaCard){
+      alertaCard.classList.toggle('hidden', cantidad === 0);
+      if(cantidad > 0 && alertaTexto){
+        const nombres = snap.docs.slice(0,3).map(d=>d.data().nombreCliente).join(', ');
+        alertaTexto.textContent = `${cantidad} solicitud${cantidad>1?'es':''} de chofer${cantidad>1?'es':''} esperando tu aprobación (${nombres}${cantidad>3?'...':''}).`;
+      }
+    }
+
+    // Si aumentó respecto a la última vez que vimos (y no es la primera carga), avisa fuerte
+    if(ultimaCantidadSolicitudes !== null && cantidad > ultimaCantidadSolicitudes){
+      sonarAlerta();
+      if('Notification' in window && Notification.permission === 'granted'){
+        try {
+          new Notification('Nueva solicitud de envases', {
+            body: 'Un chofer pidió aprobar un ajuste de envases fuera de ruta.',
+            tag: 'solicitud-envase'
+          });
+        } catch(e){}
+      }
+      toast('⚠ Nueva solicitud de envases para aprobar');
+    }
+    ultimaCantidadSolicitudes = cantidad;
+
+    // si la pestaña de Control de viajes está abierta, refresca la lista ahí también
+    if(document.getElementById('tab-envases') && !document.getElementById('tab-envases').classList.contains('hidden')){
+      renderSolicitudesEnvase();
+    }
+  });
+}
+
 async function renderSolicitudesEnvase(){
   const el = document.getElementById('solicitudesEnvaseList');
   if(!el) return;
