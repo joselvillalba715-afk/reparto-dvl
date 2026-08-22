@@ -627,7 +627,27 @@
       <div class="addr" id="agregarClienteMontoNombre">—</div>
       <div class="field">
         <label>Monto de la boleta ($)</label>
-        <input type="number" min="0" id="agregarClienteMontoBoleta" placeholder="0">
+        <input type="number" min="0" id="agregarClienteMontoBoleta" placeholder="0" oninput="onCambioBoletaAgregarCliente()">
+      </div>
+      <div class="field">
+        <label style="display:flex; align-items:center; gap:8px; font-weight:600;">
+          <input type="checkbox" id="agregarClienteTransfirioCheck" onchange="toggleTransferenciaAgregarCliente()" style="width:18px; height:18px;">
+          Ya transfirió
+        </label>
+        <div id="agregarClienteTransferenciaFields" class="hidden" style="margin-top:8px; padding:10px; border:1px solid var(--line); border-radius:10px;">
+          <div class="pill-group" id="agregarClienteAnticipoPills">
+            <div class="pill selected" data-tipo="total" onclick="selectAnticipoTipoAgregarCliente('total')">Pago total</div>
+            <div class="pill" data-tipo="parcial" onclick="selectAnticipoTipoAgregarCliente('parcial')">Pago parcial</div>
+          </div>
+          <div class="field" style="margin-bottom:8px;">
+            <label>Monto transferido ($)</label>
+            <input type="number" min="0" id="agregarClienteAnticipoMonto" placeholder="0">
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label>Nota para el chofer (opcional)</label>
+            <input type="text" id="agregarClienteAnticipoNota" placeholder="Ej: faltan $3.000 en efectivo">
+          </div>
+        </div>
       </div>
       <div class="field">
         <label>Cajones que le prestás (opcional)</label>
@@ -1248,6 +1268,7 @@ async function borrarTodosClientes(){
 let rutaSeleccion = new Set();
 let selectedMontoBoleta = {}; // { clienteId: 15000 } — monto de la boleta cargado al armar la ruta
 let selectedPrestamo = {};    // { clienteId: { 'Coca-Cola': 4 } } — cajones que se le prestan a cada cliente
+let selectedAnticipo = {};    // { clienteId: { monto, tipo, nota } } — transferencia ya recibida, cargada al armar la ruta
 
 function renderRutas(){
   poblarCamionGlobal();
@@ -1291,7 +1312,7 @@ function renderBusquedaRutas(){
     const yaAgregado = rutaSeleccion.has(c.id);
     return `
     <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:14px; padding:8px 0; border-bottom:1px solid #ece9df;">
-      <span><b>${c.nombre}</b> ${c.numero?`<span style="color:var(--ink-soft); font-size:12px;">#${c.numero}</span>`:''}<br><span style="color:var(--ink-soft); font-size:12.5px;">${c.direccion||''}</span>${yaAgregado ? ` <span class="badge ok">En el reparto — $${selectedMontoBoleta[c.id]||0}</span>` : ''}</span>
+      <span><b>${c.nombre}</b> ${c.numero?`<span style="color:var(--ink-soft); font-size:12px;">#${c.numero}</span>`:''}<br><span style="color:var(--ink-soft); font-size:12.5px;">${c.direccion||''}</span>${yaAgregado ? ` <span class="badge ok">En el reparto — $${selectedMontoBoleta[c.id]||0}</span>` : ''}${yaAgregado && selectedAnticipo[c.id] ? ` <span class="badge ok">Ya transfirió $${selectedAnticipo[c.id].monto} · ${selectedAnticipo[c.id].tipo==='total'?'Total':'Parcial'}</span>` : ''}</span>
       ${yaAgregado
         ? `<button class="btn btn-ghost" style="padding:6px 12px; font-size:12px; flex-shrink:0;" onclick="quitarDeRuta('${c.id}')">Quitar</button>`
         : `<button class="btn btn-primary" style="padding:6px 12px; font-size:12px; flex-shrink:0;" onclick="openAgregarClienteMontoSheet('${c.id}','${(c.nombre||'').replace(/'/g,"\\'")}')">Agregar</button>`
@@ -1369,22 +1390,60 @@ function quitarDeRuta(clienteId){
   renderRutas();
 }
 
-/* ---------- Agregar cliente al reparto con monto/cajones ahí mismo ---------- */
+/* ---------- Agregar cliente al reparto con monto/cajones/transferencia ahí mismo ---------- */
 let agregarClienteMontoId = null;
+let agregarClienteAnticipoTipo = 'total';
+
 function openAgregarClienteMontoSheet(clienteId, nombre){
   agregarClienteMontoId = clienteId;
+  agregarClienteAnticipoTipo = 'total';
   document.getElementById('agregarClienteMontoNombre').textContent = nombre;
   document.getElementById('agregarClienteMontoBoleta').value = '';
+  document.getElementById('agregarClienteTransfirioCheck').checked = false;
+  document.getElementById('agregarClienteTransferenciaFields').classList.add('hidden');
+  document.getElementById('agregarClienteAnticipoMonto').value = '';
+  document.getElementById('agregarClienteAnticipoNota').value = '';
+  document.querySelectorAll('#agregarClienteAnticipoPills .pill').forEach(p=>p.classList.toggle('selected', p.dataset.tipo==='total'));
   document.getElementById('agregarClienteMontoPrestamoInputs').innerHTML = TIPOS_ENVASE.map(tipo=>`
     <label class="field-mini" style="display:inline-flex; margin-right:14px;"><span>${tipo}</span>
       <input type="number" min="0" step="0.5" class="agregarClienteMontoPrestamoInput" data-tipo="${tipo}" placeholder="0" style="width:80px;">
     </label>
   `).join('');
   document.getElementById('agregarClienteMontoOverlay').classList.remove('hidden');
+  setTimeout(()=>{
+    const inputMonto = document.getElementById('agregarClienteMontoBoleta');
+    inputMonto.focus();
+    inputMonto.select();
+  }, 50);
 }
 function closeAgregarClienteMontoSheet(){
   document.getElementById('agregarClienteMontoOverlay').classList.add('hidden');
   agregarClienteMontoId = null;
+}
+function toggleTransferenciaAgregarCliente(){
+  const marcado = document.getElementById('agregarClienteTransfirioCheck').checked;
+  document.getElementById('agregarClienteTransferenciaFields').classList.toggle('hidden', !marcado);
+  if(marcado && agregarClienteAnticipoTipo === 'total'){
+    const boleta = parseFloat(document.getElementById('agregarClienteMontoBoleta').value) || 0;
+    if(boleta) document.getElementById('agregarClienteAnticipoMonto').value = boleta;
+  }
+}
+function onCambioBoletaAgregarCliente(){
+  const marcado = document.getElementById('agregarClienteTransfirioCheck').checked;
+  if(marcado && agregarClienteAnticipoTipo === 'total'){
+    const boleta = parseFloat(document.getElementById('agregarClienteMontoBoleta').value) || 0;
+    document.getElementById('agregarClienteAnticipoMonto').value = boleta || '';
+  }
+}
+function selectAnticipoTipoAgregarCliente(tipo){
+  agregarClienteAnticipoTipo = tipo;
+  document.querySelectorAll('#agregarClienteAnticipoPills .pill').forEach(p=>p.classList.toggle('selected', p.dataset.tipo===tipo));
+  if(tipo === 'total'){
+    const boleta = parseFloat(document.getElementById('agregarClienteMontoBoleta').value) || 0;
+    document.getElementById('agregarClienteAnticipoMonto').value = boleta || '';
+  } else {
+    document.getElementById('agregarClienteAnticipoMonto').value = '';
+  }
 }
 function confirmarAgregarClienteMonto(){
   if(!agregarClienteMontoId) return;
@@ -1395,6 +1454,20 @@ function confirmarAgregarClienteMonto(){
     const cant = parseFloat(inp.value) || 0;
     if(cant) selectedPrestamo[agregarClienteMontoId][inp.dataset.tipo] = cant;
   });
+
+  if(document.getElementById('agregarClienteTransfirioCheck').checked){
+    const montoAnticipo = parseFloat(document.getElementById('agregarClienteAnticipoMonto').value) || 0;
+    if(montoAnticipo > 0){
+      selectedAnticipo[agregarClienteMontoId] = {
+        monto: montoAnticipo,
+        tipo: agregarClienteAnticipoTipo,
+        nota: document.getElementById('agregarClienteAnticipoNota').value.trim()
+      };
+    }
+  } else {
+    delete selectedAnticipo[agregarClienteMontoId];
+  }
+
   rutaSeleccion.add(agregarClienteMontoId);
   closeAgregarClienteMontoSheet();
   renderRutas();
@@ -1418,10 +1491,13 @@ async function guardarRutaDelDia(){
     TIPOS_ENVASE.forEach(tipo => {
       if(pedido[tipo]) envases[tipo] = { prestaron: pedido[tipo], devolvieron: 0, vendieron: 0 };
     });
+    const anticipo = selectedAnticipo[clienteId]
+      ? { ...selectedAnticipo[clienteId], marcadoEn: new Date().toISOString() }
+      : null;
     const entregaId = `${fecha}_${clienteId}_v${viaje}`;
     batchWrites.push(setDoc(doc(db,'entregas',entregaId), {
       fecha, viaje, clienteId, nombre:cliente.nombre, direccion:cliente.direccion||'',
-      numero:cliente.numero||'', telefono:cliente.telefono||'', camion, montoBoleta, choferNombre,
+      numero:cliente.numero||'', telefono:cliente.telefono||'', camion, montoBoleta, choferNombre, anticipo,
       estado:'pendiente', formaPago:null, montos:{}, envases,
       envaseSaldoAlSalir: cliente.envaseSaldo || {},
       observaciones:'', horaEntrega:null
@@ -1435,6 +1511,7 @@ async function guardarRutaDelDia(){
   rutaSeleccion.clear();
   selectedMontoBoleta = {};
   selectedPrestamo = {};
+  selectedAnticipo = {};
   renderDashboard();
   renderRutas();
 }
@@ -2896,6 +2973,7 @@ Object.assign(window, {
   importClientes, eliminarCliente, borrarTodosClientes, renderRutas, renderBusquedaRutas, quitarDeRuta, guardarRutaDelDia, onCambioCamionGlobal,
   agregarClienteSuelto, openEditarClienteSheet, closeEditarClienteSheet, guardarEditarCliente,
   openAgregarClienteMontoSheet, closeAgregarClienteMontoSheet, confirmarAgregarClienteMonto,
+  toggleTransferenciaAgregarCliente, onCambioBoletaAgregarCliente, selectAnticipoTipoAgregarCliente,
   openSheet, openSheetAdmin, closeSheet, selectPago, confirmarEntrega, rechazarEntrega,
   openAnticipoSheet, closeAnticipoSheet, selectAnticipoTipo, guardarAnticipo, quitarAnticipo,
   openEditarBoletaSheet, closeEditarBoletaSheet, guardarEditarBoleta,
