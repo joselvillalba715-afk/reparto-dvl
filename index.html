@@ -1681,7 +1681,12 @@ async function confirmarAgregarClienteViaje(){
 function anticipoCell(e){
   if(e.anticipo){
     const tipoLabel = e.anticipo.tipo === 'total' ? 'Total' : 'Parcial';
-    return `<span class="badge ok">$${e.anticipo.monto} · ${tipoLabel}</span> <button class="btn btn-ghost" style="padding:4px 8px; font-size:11px; margin-top:4px;" onclick="openAnticipoSheet('${e.id}')">Editar</button>`;
+    const boleta = e.montoBoleta || 0;
+    const saldoPendiente = Math.max(0, boleta - (e.anticipo.monto||0));
+    const detalle = e.anticipo.tipo === 'total'
+      ? `$${e.anticipo.monto} · Total`
+      : `$${e.anticipo.monto} de $${boleta} · Parcial (falta $${saldoPendiente})`;
+    return `<span class="badge ok">${detalle}</span> <button class="btn btn-ghost" style="padding:4px 8px; font-size:11px; margin-top:4px;" onclick="openAnticipoSheet('${e.id}')">Editar</button>`;
   }
   if(e.estado === 'entregado') return '—';
   return `<button class="btn btn-ghost" style="padding:5px 10px; font-size:12px;" onclick="openAnticipoSheet('${e.id}')">Marcar transferencia</button>`;
