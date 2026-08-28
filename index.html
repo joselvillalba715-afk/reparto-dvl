@@ -1518,6 +1518,23 @@ async function guardarRutaDelDia(){
 /* =======================================================================
    DASHBOARD (ADMIN)
    ======================================================================= */
+function resumenPagosHtml(pagos){
+  const total = pagos.efectivo + pagos.transferencia + pagos.qr;
+  const items = [
+    ['EFECTIVO', pagos.efectivo],
+    ['TRANSFERENCIA', pagos.transferencia],
+    ['QR', pagos.qr],
+    ['TOTAL COBRADO', total]
+  ];
+  return `<div style="display:flex; gap:22px; flex-wrap:wrap; padding:10px 0;">
+    ${items.map(([label, val], i)=>`
+      <div>
+        <div style="font-size:10px; font-weight:700; letter-spacing:.04em; color:var(--ink-soft);">${label}</div>
+        <div style="font-size:${i===3?'18':'15'}px; font-weight:700; margin-top:2px;">$${val.toLocaleString('es-AR')}</div>
+      </div>`).join('')}
+  </div>`;
+}
+
 async function renderDashboard(){
   const fecha = todayStr();
   document.getElementById('dashDate').textContent = fmtDate(fecha) + ' — actualiza en vivo';
@@ -1536,6 +1553,7 @@ async function renderDashboard(){
     const entregadosDia = entregas.filter(e=>e.estado==='entregado').length;
     const rechazadosDia = entregas.filter(e=>e.estado==='rechazado').length;
     const pendientesDia = totalDia - entregadosDia - rechazadosDia;
+    const pagosDia = calcularDesglosePago(entregas);
 
     document.getElementById('dashSummary').innerHTML = totalDia
       ? `<div style="display:flex; gap:20px; flex-wrap:wrap; align-items:baseline;">
@@ -1543,7 +1561,8 @@ async function renderDashboard(){
           ${rechazadosDia ? `<span style="color:var(--red);">${rechazadosDia} rechazados</span>` : ''}
           <span style="color:${pendientesDia>0?'var(--amber)':'var(--green)'}; font-weight:600;">${pendientesDia} pendientes en total</span>
         </div>
-        <div class="sub" style="margin:6px 0 0;">El detalle de cada viaje está en las tarjetas de abajo — tocá el título para desplegarlo.</div>`
+        <div class="sub" style="margin:6px 0 0;">El detalle de cada viaje está en las tarjetas de abajo — tocá el título para desplegarlo.</div>
+        <div style="border-top:1px solid var(--line); margin-top:10px;">${resumenPagosHtml(pagosDia)}</div>`
       : `<div class="sub">Todavía no armaste ningún reparto hoy.</div>`;
 
     window.__ENTREGAS_HOY_ADMIN = {};
@@ -1554,12 +1573,14 @@ async function renderDashboard(){
       const rechazadosG = g.lista.filter(e=>e.estado==='rechazado').length;
       const pendientesG = g.lista.length - entregadosG - rechazadosG;
       const choferGrupo = g.lista.find(e=>e.choferNombre)?.choferNombre;
+      const pagosG = calcularDesglosePago(g.lista);
       return `
       <details class="card">
         <summary style="cursor:pointer; list-style:none; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
           <h2 style="margin:0;">${g.camion} · Viaje ${g.viaje}${choferGrupo ? ' — '+choferGrupo : ''}</h2>
           <span class="sub" style="margin:0;">${entregadosG}/${g.lista.length} entregados${rechazadosG ? ` · ${rechazadosG} rechazados` : ''} · <b style="color:${pendientesG>0?'var(--amber)':'var(--green)'};">${pendientesG} pendientes</b></span>
         </summary>
+        <div style="border-top:1px solid var(--line); border-bottom:1px solid #ece9df; margin:8px 0 4px;">${resumenPagosHtml(pagosG)}</div>
         <div style="display:flex; justify-content:flex-end; margin:10px 0 6px;">
           <button class="btn btn-ghost" style="padding:6px 12px; font-size:12px;" onclick="event.preventDefault(); openAgregarClienteViaje('${g.camion}', ${g.viaje})">+ Agregar cliente</button>
         </div>
