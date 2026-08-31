@@ -337,12 +337,16 @@
     <!-- HISTORIAL -->
     <div id="tab-historial" class="hidden">
       <div class="card">
-        <h2>Ver un día anterior</h2>
-        <div class="sub">Consultá el resumen de cualquier día ya pasado, mientras siga en el detalle (todavía no archivado).</div>
-        <div class="row" style="align-items:flex-end; max-width:320px;">
+        <h2>Ver historial por rango de fechas</h2>
+        <div class="sub">Consultá el resumen de cualquier período ya pasado, mientras siga en el detalle (todavía no archivado).</div>
+        <div class="row" style="align-items:flex-end; max-width:420px; flex-wrap:wrap;">
           <div class="field" style="margin-bottom:0;">
-            <label>Fecha</label>
-            <input type="date" id="historialFecha">
+            <label>Desde</label>
+            <input type="date" id="historialFechaDesde">
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label>Hasta</label>
+            <input type="date" id="historialFechaHasta">
           </div>
           <button class="btn btn-primary" onclick="verDiaAnterior()">Ver</button>
         </div>
@@ -2183,11 +2187,12 @@ async function recalcularTodosLosSaldos(){
    HISTORIAL — ver días anteriores, archivar repartos viejos
    ======================================================================= */
 function renderHistorialTab(){
-  if(!document.getElementById('historialFecha').value){
+  if(!document.getElementById('historialFechaDesde').value){
     const ayer = new Date();
     ayer.setDate(ayer.getDate()-1);
-    document.getElementById('historialFecha').value =
-      `${ayer.getFullYear()}-${String(ayer.getMonth()+1).padStart(2,'0')}-${String(ayer.getDate()).padStart(2,'0')}`;
+    const ayerStr = `${ayer.getFullYear()}-${String(ayer.getMonth()+1).padStart(2,'0')}-${String(ayer.getDate()).padStart(2,'0')}`;
+    document.getElementById('historialFechaDesde').value = ayerStr;
+    document.getElementById('historialFechaHasta').value = ayerStr;
   }
   cargarResumenesArchivados();
 }
@@ -2196,8 +2201,8 @@ function agruparEntregasPorViaje(entregas){
   const byGrupo = {};
   entregas.forEach(e=>{
     const viaje = e.viaje || 1;
-    const key = `${e.camion}||${viaje}`;
-    byGrupo[key] = byGrupo[key] || { camion:e.camion, viaje, clientes:0, totalBoleta:0, totalCobrado:0, choferNombre:null, tipos:{} };
+    const key = `${e.fecha}||${e.camion}||${viaje}`;
+    byGrupo[key] = byGrupo[key] || { fecha:e.fecha, camion:e.camion, viaje, clientes:0, totalBoleta:0, totalCobrado:0, choferNombre:null, tipos:{} };
     byGrupo[key].clientes++;
     byGrupo[key].totalBoleta += (e.montoBoleta||0);
     if(e.estado === 'entregado') byGrupo[key].totalCobrado += (e.totalCobrado ?? e.montoBoleta ?? 0);
@@ -2210,25 +2215,39 @@ function agruparEntregasPorViaje(entregas){
       byGrupo[key].tipos[tipo].vendidoBotellas += envases[tipo].vendieron||0;
     });
   });
-  return Object.values(byGrupo).sort((a,b)=> a.camion.localeCompare(b.camion) || a.viaje-b.viaje);
+  return Object.values(byGrupo).sort((a,b)=> a.fecha.localeCompare(b.fecha) || a.camion.localeCompare(b.camion) || a.viaje-b.viaje);
 }
 
 async function verDiaAnterior(){
-  const fecha = document.getElementById('historialFecha').value;
+  const desde = document.getElementById('historialFechaDesde').value;
+  const hasta = document.getElementById('historialFechaHasta').value;
   const resultEl = document.getElementById('historialDiaResultado');
-  if(!fecha){ toast('Elegí una fecha'); return; }
+  if(!desde || !hasta){ toast('Elegí las dos fechas del rango'); return; }
+  if(desde > hasta){ toast('"Desde" no puede ser posterior a "Hasta"'); return; }
   resultEl.innerHTML = `<div class="sub">Buscando...</div>`;
   const { db, collection, query, where, getDocs } = window.__fb;
-  const snap = await getDocs(query(collection(db,'entregas'), where('fecha','==',fecha)));
+  const snap = await getDocs(query(collection(db,'entregas'), where('fecha','>=',desde), where('fecha','<=',hasta)));
   const entregas = snap.docs.map(d=>d.data());
   if(!entregas.length){
-    resultEl.innerHTML = `<div class="sub">No hay entregas guardadas para el ${fecha} (o ya fueron archivadas — mirá "Resúmenes archivados" más abajo).</div>`;
+    resultEl.innerHTML = `<div class="sub">No hay entregas guardadas entre el ${desde} y el ${hasta} (o ya fueron archivadas — mirá "Resúmenes archivados" más abajo).</div>`;
     return;
   }
+
+  const pagos = calcularDesglosePago(entregas);
+  const entregadas = entregas.filter(e=>e.estado==='entregado').length;
+  const rechazadas = entregas.filter(e=>e.estado==='rechazado').length;
+
+  const resumenGeneral = `
+    <div style="border:2px solid var(--ink); border-radius:10px; padding:12px; margin-bottom:14px;">
+      <div style="font-weight:700; margin-bottom:2px;">Resumen general del ${desde}${hasta!==desde ? ' al '+hasta : ''}</div>
+      <div class="sub" style="margin:0;">${entregas.length} clientes · ${entregadas} entregados${rechazadas ? ` · ${rechazadas} rechazados` : ''}</div>
+      ${resumenPagosHtml(pagos)}
+    </div>`;
+
   const grupos = agruparEntregasPorViaje(entregas);
-  resultEl.innerHTML = grupos.map(g=>`
+  resultEl.innerHTML = resumenGeneral + grupos.map(g=>`
     <div style="border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:10px;">
-      <div style="font-weight:700;">${g.camion} · Viaje ${g.viaje}${g.choferNombre ? ' — '+g.choferNombre : ''}</div>
+      <div style="font-weight:700;">${fmtFechaCorta(g.fecha)} — ${g.camion} · Viaje ${g.viaje}${g.choferNombre ? ' — '+g.choferNombre : ''}</div>
       <div class="sub" style="margin:2px 0 0;">${g.clientes} clientes · $${g.totalBoleta.toLocaleString('es-AR')} en boletas · $${g.totalCobrado.toLocaleString('es-AR')} cobrado</div>
       <div class="sub" style="margin:4px 0 0;">${TIPOS_ENVASE.map(t=>{
         const d = g.tipos[t] || {prestado:0, devuelto:0, vendidoBotellas:0};
